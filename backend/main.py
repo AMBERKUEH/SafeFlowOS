@@ -3,7 +3,6 @@ main.py - FastAPI server for NurseAI Multi-Agent Scheduling System
 
 All endpoints use real agents - NO hardcoded data.
 """
-
 import sys
 import os
 import json
@@ -11,6 +10,8 @@ import tempfile
 
 # Add agents directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "agents"))
+
+from agents.agent6_surgeye import SurgEyeAgent
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -96,6 +97,13 @@ try:
 except Exception as e:
     print(f"✗ MemoryAgent failed: {e}")
     memory_agent = None
+    
+try:
+    surgeye_agent = SurgEyeAgent()
+    print("✓ SurgEyeAgent initialized")
+except Exception as e:
+    print(f"✗ SurgEyeAgent failed: {e}")
+    surgeye_agent = None
 
 print("\n" + "=" * 70)
 print("✅ ALL AGENTS READY — SERVER STARTING")
@@ -565,6 +573,35 @@ def handle_emergency(request: EmergencyRequest):
         print(f"  ✗ EmergencyAgent failed: {e}")
         raise HTTPException(status_code=500, detail=f"Emergency Agent failed — {str(e)}")
 
+
+# POST /api/surgeye/baseline-scan - Perform baseline scan
+class SurgEyeBaselineRequest(BaseModel):
+    surgery_id: str
+
+class SurgEyePostopRequest(BaseModel):
+    surgery_id: str
+    baseline_items: list[str]
+
+@app.post("/api/surgeye/baseline-scan")
+def surgeye_baseline_scan(request: SurgEyeBaselineRequest):
+    if not surgeye_agent:
+        raise HTTPException(status_code=503, detail="SurgEye Agent not available")
+    return surgeye_agent.baseline_scan(request.surgery_id)
+
+@app.post("/api/surgeye/postop-scan")
+def surgeye_postop_scan(request: SurgEyePostopRequest):
+    if not surgeye_agent:
+        raise HTTPException(status_code=503, detail="SurgEye Agent not available")
+    result = surgeye_agent.postop_scan(
+        surgery_id=request.surgery_id,
+        baseline_items=request.baseline_items
+    )
+    if graph_db and result["missing_items"]:
+        graph_db.log_missing_instrument(
+            surgery_id=request.surgery_id,
+            missing_items=result["missing_items"]
+        )
+    return result
 
 # GET /api/context - Get memory context
 @app.get("/api/context")
