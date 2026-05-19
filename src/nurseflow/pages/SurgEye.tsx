@@ -1,8 +1,10 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { MainNavbar } from '../components/MainNavbar';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   AlertTriangle, Camera, CheckCircle, XCircle, Clock, FileText, Loader2,
-  Play, Square, ScanLine, AlertOctagon, User, Activity, Download
+  Play, Square, ScanLine, AlertOctagon, User, Activity,
+  LayoutDashboard, Users, Calendar, Settings, HelpCircle, Search, Bell, Grid,
+  ChevronRight, Droplets, Menu, Microscope
 } from 'lucide-react';
 
 interface TimelineEvent {
@@ -51,7 +53,25 @@ interface Investigation {
   created_at: string;
 }
 
+const SidebarItem = ({ icon: Icon, label, active = false, href = "#" }: { icon: any, label: string, active?: boolean, href?: string }) => (
+  <motion.a
+    href={href}
+    whileHover={{ scale: 0.98 }}
+    whileTap={{ scale: 0.95 }}
+    className={`flex items-center gap-4 px-4 py-2.5 rounded-lg transition-colors group ${
+      active
+        ? 'bg-surface-container-high text-on-surface'
+        : 'text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface'
+    }`}
+  >
+    <Icon size={20} className={active ? 'text-secondary' : 'group-hover:text-secondary transition-colors'} />
+    <span className={`text-[15px] ${active ? 'font-medium' : 'font-normal'}`}>{label}</span>
+  </motion.a>
+);
+
 export default function SurgEyePage() {
+  const [isSidebarOpen, setSidebarOpen] = useState(true);
+
   // Camera/WebSocket state
   const [frame, setFrame] = useState('');
   const [connected, setConnected] = useState(false);
@@ -387,55 +407,139 @@ export default function SurgEyePage() {
 
   // Get count color based on baseline comparison
   const getCountColor = (instrument: string, count: number) => {
-    if (!baseline) return 'text-gray-400';
+    if (!baseline) return 'text-on-surface';
     const expected = baseline.baseline[instrument] || 0;
-    if (count === expected) return 'text-green-400';
-    if (count < expected) return 'text-yellow-400';
-    return 'text-red-400';
+    if (count === expected) return 'text-secondary';
+    if (count < expected) return 'text-on-surface';
+    return 'text-error';
   };
 
   const getCountBgColor = (instrument: string, count: number) => {
-    if (!baseline) return 'bg-gray-800';
+    if (!baseline) return 'bg-surface-container-low border-outline-variant';
     const expected = baseline.baseline[instrument] || 0;
-    if (count === expected) return 'bg-green-500/20 border-green-500/50';
-    if (count < expected) return 'bg-yellow-500/20 border-yellow-500/50';
-    return 'bg-red-500/20 border-red-500/50';
+    if (count === expected) return 'bg-secondary/10 border-secondary/30';
+    if (count < expected) return 'bg-surface-container-low border-outline-variant';
+    return 'bg-error/10 border-error/30';
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col">
-      <div className="relative z-50">
-        <MainNavbar />
-      </div>
-      
-      {/* Session Banner */}
-      <div className="bg-gray-800 border-b border-gray-700 px-6 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              <div className={`w-3 h-3 rounded-full ${session?.active ? 'bg-green-400 animate-pulse' : 'bg-gray-500'}`} />
-              <span className="text-white font-medium">
-                {session?.active ? 'Active Session' : 'No Active Session'}
-              </span>
+    <div className="flex h-screen bg-surface overflow-hidden font-sans">
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.nav
+            initial={{ x: -256 }}
+            animate={{ x: 0 }}
+            exit={{ x: -256 }}
+            className="fixed md:relative z-40 flex flex-col h-full w-64 bg-surface-container-lowest border-r border-outline-variant py-8 px-4"
+          >
+            <div className="flex items-center gap-3 mb-10 px-2">
+              <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-on-primary shadow-sm shadow-primary/10">
+                <Droplets size={22} />
+              </div>
+              <div>
+                <h1 className="text-xl font-semibold text-on-surface tracking-tight">SafeFlow OS</h1>
+                <p className="text-[11px] uppercase tracking-wider font-bold text-on-surface-variant/70">Healthcare Workspace</p>
+              </div>
             </div>
-            {session?.active && (
-              <>
-                <div className="flex items-center gap-2 text-gray-300">
-                  <User size={16} />
-                  <span>Nurse: {session.nurse}</span>
-                </div>
-                <div className="flex items-center gap-2 text-gray-300">
-                  <Clock size={16} />
-                  <span>Duration: {sessionDuration}</span>
-                </div>
-              </>
-            )}
+
+            <div className="flex-1 space-y-1 overflow-y-auto custom-scrollbar">
+              <SidebarItem icon={LayoutDashboard} label="Dashboard" href="/" />
+              <SidebarItem icon={Users} label="Patients" />
+              <SidebarItem icon={Calendar} label="Nurse Schedule" href="/nurseflow/upload" />
+              <SidebarItem icon={Microscope} label="SurgEye Analysis" active href="/nurseflow/surgeye" />
+              <SidebarItem icon={FileText} label="Records" />
+              <SidebarItem icon={Settings} label="Settings" />
+            </div>
+
+            <div className="mt-auto pt-6 border-t border-outline-variant space-y-1">
+              <SidebarItem icon={HelpCircle} label="Support" />
+              <SidebarItem icon={User} label="Account" />
+            </div>
+          </motion.nav>
+        )}
+      </AnimatePresence>
+
+      <div className="flex-1 flex flex-col min-w-0 relative">
+        <header className="flex justify-between items-center px-6 lg:px-container-margin w-full bg-surface-container-lowest/80 backdrop-blur-md h-16 shadow-[0_1px_10px_0_rgba(0,0,0,0.02)] z-30 sticky top-0 border-b border-outline-variant">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setSidebarOpen(!isSidebarOpen)}
+              className="p-2 text-on-surface-variant hover:text-primary transition-colors rounded-full hover:bg-surface-container-low"
+            >
+              <Menu size={20} />
+            </button>
+            <div className="hidden sm:flex items-center gap-2 text-sm text-on-surface-variant">
+              <span>SafeFlow OS</span>
+              <ChevronRight size={14} />
+              <span className="text-on-surface font-medium">SurgEye Analysis</span>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
+
+          <div className="flex-1 max-w-md mx-8 hidden lg:block">
+            <div className="relative group">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-on-surface-variant group-focus-within:text-secondary transition-colors" size={18} />
+              <input 
+                className="w-full bg-surface-container-low border border-outline-variant rounded-full py-2 pl-11 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-secondary/10 focus:border-secondary/30 transition-all placeholder:text-on-surface-variant"
+                placeholder="Search procedures, nurses, or instruments..."
+                type="text"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button className="p-2.5 text-on-surface-variant hover:text-secondary transition-colors rounded-full hover:bg-surface-container-low relative">
+              <Bell size={20} />
+              <span className="absolute top-2.5 right-2.5 w-2 h-2 bg-error rounded-full ring-2 ring-white"></span>
+            </button>
+            <button className="p-2.5 text-on-surface-variant hover:text-secondary transition-colors rounded-full hover:bg-surface-container-low">
+              <Grid size={20} />
+            </button>
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-y-auto p-6 md:p-8 lg:p-container-margin pb-24">
+          <div className="max-w-[1500px] mx-auto">
+            <motion.section
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-8 flex flex-col xl:flex-row xl:items-end justify-between gap-6"
+            >
+              <div>
+                <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Surgical Safety</p>
+                <h2 className="text-4xl md:text-5xl font-semibold text-on-surface tracking-tight">SurgEye Analysis</h2>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-surface-container-lowest border border-outline-variant rounded-full">
+                  <div className={`w-2.5 h-2.5 rounded-full ${session?.active ? 'bg-secondary animate-pulse' : 'bg-outline'}`} />
+                  <span className="text-sm font-medium text-on-surface">
+                    {session?.active ? 'Active Session' : 'No Active Session'}
+                  </span>
+                </div>
+                {session?.active && (
+                  <>
+                    <div className="flex items-center gap-2 px-4 py-2.5 bg-surface-container-lowest border border-outline-variant rounded-full text-sm text-on-surface-variant">
+                      <User size={16} />
+                      <span>{session.nurse}</span>
+                    </div>
+                    <div className="flex items-center gap-2 px-4 py-2.5 bg-surface-container-lowest border border-outline-variant rounded-full text-sm text-on-surface-variant">
+                      <Clock size={16} />
+                      <span>{sessionDuration}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </motion.section>
+            <div className="mb-8 bg-surface-container-lowest border border-outline-variant rounded-2xl p-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 text-sm text-on-surface-variant">
+                  <div className={`w-2 h-2 rounded-full ${connected ? 'bg-secondary' : 'bg-error'}`} />
+                  <span>{connected ? 'Live camera stream connected' : `Camera stream ${wsStatus}`}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
             {!session?.active ? (
               <button
                 onClick={startSession}
-                className="flex items-center gap-2 px-4 py-2 bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-full text-sm font-medium shadow-sm"
               >
                 <Play size={18} />
                 Start Session
@@ -443,7 +547,7 @@ export default function SurgEyePage() {
             ) : (
               <button
                 onClick={endSession}
-                className="flex items-center gap-2 px-4 py-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-error text-white rounded-full text-sm font-medium shadow-sm"
               >
                 <Square size={18} />
                 End Session
@@ -454,7 +558,7 @@ export default function SurgEyePage() {
               <>
                 <button
                   onClick={demoSetBaseline}
-                  className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors text-sm"
+                  className="flex items-center gap-2 px-3 py-2 bg-surface-container-low text-on-surface rounded-full hover:bg-surface-container transition-colors text-sm"
                   title="DEMO: Fake baseline without camera"
                 >
                   DEMO Baseline
@@ -463,14 +567,14 @@ export default function SurgEyePage() {
                   <>
                     <button
                       onClick={demoPostopPass}
-                      className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors text-sm"
+                      className="flex items-center gap-2 px-3 py-2 bg-secondary/10 text-secondary rounded-full hover:bg-secondary/15 transition-colors text-sm"
                       title="DEMO: Fake PASS result"
                     >
                       DEMO Pass
                     </button>
                     <button
                       onClick={demoPostopFail}
-                      className="flex items-center gap-2 px-3 py-2 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-colors text-sm"
+                      className="flex items-center gap-2 px-3 py-2 bg-error/10 text-error rounded-full hover:bg-error/15 transition-colors text-sm"
                       title="DEMO: Fake FAIL result"
                     >
                       DEMO Fail
@@ -479,27 +583,27 @@ export default function SurgEyePage() {
                 )}
               </>
             )}
-          </div>
-        </div>
-      </div>
+                </div>
+              </div>
+            </div>
       
-      <div className="flex-1 flex p-4 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_320px] gap-6">
         {/* Left Panel - Pre-op & Post-op */}
-        <div className="w-80 flex flex-col gap-4">
+        <div className="flex flex-col gap-6">
           {/* Pre-op Section */}
-          <div className="bg-gray-800 rounded-xl border border-gray-700 p-4">
-            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <ScanLine size={20} className="text-cyan-400" />
+          <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-on-surface mb-4 flex items-center gap-2">
+              <ScanLine size={20} className="text-secondary" />
               Pre-Op Baseline
             </h3>
             
             {!baseline ? (
               <div className="text-center py-6">
-                <p className="text-gray-400 mb-4">Scan instruments before procedure</p>
+                <p className="text-on-surface-variant mb-4 text-sm">Scan instruments before procedure</p>
                 <button
                   onClick={scanBaseline}
                   disabled={isScanningBaseline || !session?.active}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-cyan-500/20 text-cyan-400 rounded-lg hover:bg-cyan-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary text-on-primary rounded-full hover:bg-primary-container transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
                 >
                   {isScanningBaseline ? (
                     <>
@@ -514,12 +618,12 @@ export default function SurgEyePage() {
                   )}
                 </button>
                 {!session?.active && (
-                  <p className="text-sm text-gray-500 mt-2">Start session first</p>
+                  <p className="text-sm text-on-surface-variant mt-2">Start session first</p>
                 )}
               </div>
             ) : (
               <div>
-                <div className="flex items-center gap-2 mb-3 text-green-400">
+                <div className="flex items-center gap-2 mb-3 text-secondary">
                   <CheckCircle size={18} />
                   <span className="font-medium">Baseline Locked</span>
                 </div>
@@ -528,28 +632,28 @@ export default function SurgEyePage() {
                   <img 
                     src={`data:image/jpeg;base64,${baseline.screenshot}`}
                     alt="Baseline"
-                    className="w-full h-32 object-cover rounded-lg mb-3"
+                    className="w-full h-32 object-cover rounded-xl mb-3"
                   />
                 )}
                 
                 <div className="space-y-2">
                   {Object.entries(baseline.baseline).map(([instrument, count]) => (
                     <div key={instrument} className="flex items-center justify-between">
-                      <span className="text-gray-300">{instrument}</span>
+                      <span className="text-on-surface-variant text-sm">{instrument}</span>
                       <div className="flex items-center gap-2">
-                        <div className="w-20 h-2 bg-gray-700 rounded-full overflow-hidden">
+                        <div className="w-20 h-2 bg-surface-container rounded-full overflow-hidden">
                           <div 
-                            className="h-full bg-cyan-400"
+                            className="h-full bg-secondary"
                             style={{ width: `${Math.min(count * 20, 100)}%` }}
                           />
                         </div>
-                        <span className="text-cyan-400 font-mono w-6 text-right">{count}</span>
+                        <span className="text-secondary font-mono w-6 text-right">{count}</span>
                       </div>
                     </div>
                   ))}
                 </div>
                 
-                <p className="text-xs text-gray-500 mt-3">
+                <p className="text-xs text-on-surface-variant mt-3">
                   Set: {new Date(baseline.timestamp).toLocaleTimeString()}
                 </p>
               </div>
@@ -557,19 +661,19 @@ export default function SurgEyePage() {
           </div>
           
           {/* Post-op Section */}
-          <div className="bg-gray-800 rounded-xl border border-gray-700 p-4">
-            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <CheckCircle size={20} className="text-green-400" />
+          <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-on-surface mb-4 flex items-center gap-2">
+              <CheckCircle size={20} className="text-secondary" />
               Post-Op Check
             </h3>
             
             {!postopResult ? (
               <div className="text-center py-6">
-                <p className="text-gray-400 mb-4">Verify instruments after procedure</p>
+                <p className="text-on-surface-variant mb-4 text-sm">Verify instruments after procedure</p>
                 <button
                   onClick={scanPostop}
                   disabled={isScanningPostop || !baseline}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-secondary text-on-secondary rounded-full hover:bg-secondary-container transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
                 >
                   {isScanningPostop ? (
                     <>
@@ -584,12 +688,12 @@ export default function SurgEyePage() {
                   )}
                 </button>
                 {!baseline && (
-                  <p className="text-sm text-gray-500 mt-2">Set baseline first</p>
+                  <p className="text-sm text-on-surface-variant mt-2">Set baseline first</p>
                 )}
               </div>
             ) : (
               <div>
-                <div className={`flex items-center gap-2 mb-3 ${postopResult.passed ? 'text-green-400' : 'text-red-400'}`}>
+                <div className={`flex items-center gap-2 mb-3 ${postopResult.passed ? 'text-secondary' : 'text-error'}`}>
                   {postopResult.passed ? <CheckCircle size={18} /> : <XCircle size={18} />}
                   <span className="font-medium">
                     {postopResult.passed ? 'PASS - All Accounted' : 'FAIL - Items Missing'}
@@ -600,7 +704,7 @@ export default function SurgEyePage() {
                   <img 
                     src={`data:image/jpeg;base64,${postopResult.postop_image}`}
                     alt="Post-op"
-                    className="w-full h-32 object-cover rounded-lg mb-3"
+                    className="w-full h-32 object-cover rounded-xl mb-3"
                   />
                 )}
                 
@@ -610,8 +714,8 @@ export default function SurgEyePage() {
                     const status = actual === expected ? '✅' : actual < expected ? '❌' : '⚠️';
                     return (
                       <div key={instrument} className="flex items-center justify-between">
-                        <span className="text-gray-300">{instrument}</span>
-                        <span className={actual === expected ? 'text-green-400' : 'text-red-400'}>
+                        <span className="text-on-surface-variant">{instrument}</span>
+                        <span className={actual === expected ? 'text-secondary' : 'text-error'}>
                           {expected} → {actual} {status}
                         </span>
                       </div>
@@ -620,12 +724,12 @@ export default function SurgEyePage() {
                 </div>
                 
                 {!postopResult.passed && postopResult.investigation && (
-                  <div className="mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-                    <p className="text-red-400 text-sm">
+                  <div className="mt-3 p-3 bg-error/5 border border-error/20 rounded-xl">
+                    <p className="text-error text-sm">
                       <AlertOctagon size={14} className="inline mr-1" />
                       Investigation Opened
                     </p>
-                    <p className="text-gray-400 text-xs mt-1">
+                    <p className="text-on-surface-variant text-xs mt-1">
                       {postopResult.investigation.flagged_nurse} has been flagged
                     </p>
                   </div>
@@ -635,19 +739,19 @@ export default function SurgEyePage() {
           </div>
           
           {/* Timeline */}
-          <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 flex-1">
-            <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-              <Activity size={20} className="text-purple-400" />
+          <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-5 flex-1 shadow-sm">
+            <h3 className="text-sm font-semibold text-on-surface mb-3 flex items-center gap-2">
+              <Activity size={20} className="text-secondary" />
               Timeline
             </h3>
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {timeline.length === 0 ? (
-                <p className="text-gray-500 text-sm">No events yet</p>
+                <p className="text-on-surface-variant text-sm">No events yet</p>
               ) : (
                 timeline.slice(-10).reverse().map((event, idx) => (
-                  <div key={idx} className="text-sm border-l-2 border-gray-600 pl-3 py-1">
-                    <span className="text-gray-500 text-xs">{event.time}</span>
-                    <p className="text-gray-300">
+                  <div key={idx} className="text-sm border-l-2 border-outline-variant pl-3 py-1">
+                    <span className="text-on-surface-variant text-xs">{event.time}</span>
+                    <p className="text-on-surface">
                       {event.instrument} - {event.action}
                     </p>
                   </div>
@@ -659,21 +763,21 @@ export default function SurgEyePage() {
         
         {/* Center - Live Video */}
         <div className="flex-1 flex flex-col">
-          <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 flex-1">
+          <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-5 flex-1 shadow-sm">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-                <Camera size={20} className="text-cyan-400" />
+              <h3 className="text-sm font-semibold text-on-surface flex items-center gap-2">
+                <Camera size={20} className="text-secondary" />
                 Live Monitor
               </h3>
               <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400'}`} />
-                <span className="text-sm text-gray-400">
+                <div className={`w-2 h-2 rounded-full ${connected ? 'bg-secondary' : 'bg-error'}`} />
+                <span className="text-sm text-on-surface-variant">
                   {connected ? 'Live' : 'Disconnected'}
                 </span>
               </div>
             </div>
             
-            <div className="relative bg-black rounded-lg overflow-hidden" style={{ height: '480px' }}>
+            <div className="relative bg-inverse-surface rounded-xl overflow-hidden" style={{ height: '480px' }}>
               {frame ? (
                 <img 
                   src={`data:image/jpeg;base64,${frame}`}
@@ -681,7 +785,7 @@ export default function SurgEyePage() {
                   className="w-full h-full object-contain"
                 />
               ) : (
-                <div className="w-full h-full flex items-center justify-center text-gray-500">
+                <div className="w-full h-full flex items-center justify-center text-inverse-on-surface/70">
                   <div className="text-center">
                     <Camera size={48} className="mx-auto mb-2 opacity-50" />
                     <p>Waiting for camera...</p>
@@ -692,23 +796,23 @@ export default function SurgEyePage() {
           </div>
           
           {/* Live Counts */}
-          <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 mt-4">
-            <h3 className="text-lg font-semibold text-white mb-3">Live Instrument Counts</h3>
+          <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-5 mt-6 shadow-sm">
+            <h3 className="text-sm font-semibold text-on-surface mb-3">Live Instrument Counts</h3>
             {Object.keys(liveCounts).length === 0 ? (
-              <p className="text-gray-500">No instruments detected</p>
+              <p className="text-on-surface-variant">No instruments detected</p>
             ) : (
-              <div className="grid grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-3">
                 {Object.entries(liveCounts).map(([instrument, count]) => (
                   <div 
                     key={instrument}
-                    className={`p-3 rounded-lg border ${getCountBgColor(instrument, count)}`}
+                    className={`p-3 rounded-xl border ${getCountBgColor(instrument, count)}`}
                   >
-                    <p className="text-xs text-gray-400">{instrument}</p>
+                    <p className="text-xs text-on-surface-variant">{instrument}</p>
                     <p className={`text-2xl font-bold ${getCountColor(instrument, count)}`}>
                       {count}
                     </p>
                     {baseline && (
-                      <p className="text-xs text-gray-500">
+                      <p className="text-xs text-on-surface-variant">
                         expected: {baseline.baseline[instrument] || 0}
                       </p>
                     )}
@@ -720,37 +824,37 @@ export default function SurgEyePage() {
         </div>
         
         {/* Right Panel - Investigations */}
-        <div className="w-80 bg-gray-800 rounded-xl border border-gray-700 p-4">
-          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <AlertTriangle size={20} className="text-red-400" />
+        <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-on-surface mb-4 flex items-center gap-2">
+            <AlertTriangle size={20} className="text-error" />
             Investigations
           </h3>
           
           {investigations.length === 0 ? (
-            <p className="text-gray-500 text-center py-8">No investigations</p>
+            <p className="text-on-surface-variant text-center py-8">No investigations</p>
           ) : (
             <div className="space-y-3">
               {investigations.map((inv) => (
                 <div 
                   key={inv.id}
-                  className="p-3 bg-gray-700/50 rounded-lg border border-gray-600 cursor-pointer hover:bg-gray-700 transition-colors"
+                  className="p-3 bg-surface-container-low rounded-xl border border-outline-variant cursor-pointer hover:bg-surface-container transition-colors"
                   onClick={() => {
                     setSelectedInvestigation(inv);
                     setShowInvestigationModal(true);
                   }}
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-gray-400">{inv.id}</span>
+                    <span className="text-xs text-on-surface-variant">{inv.id}</span>
                     <span className={`text-xs px-2 py-1 rounded ${
                       inv.status === 'under_investigation' 
-                        ? 'bg-yellow-500/20 text-yellow-400' 
-                        : 'bg-green-500/20 text-green-400'
+                        ? 'bg-error/10 text-error' 
+                        : 'bg-secondary/10 text-secondary'
                     }`}>
                       {inv.status}
                     </span>
                   </div>
-                  <p className="text-sm text-white">{inv.nurse_name}</p>
-                  <p className="text-xs text-gray-400">
+                  <p className="text-sm text-on-surface">{inv.nurse_name}</p>
+                  <p className="text-xs text-on-surface-variant">
                     {Object.entries(inv.missing_items).map(([k, v]) => `${v}x ${k}`).join(', ')}
                   </p>
                 </div>
@@ -759,16 +863,19 @@ export default function SurgEyePage() {
           )}
         </div>
       </div>
+          </div>
+        </main>
+      </div>
       
       {/* Investigation Modal */}
       {showInvestigationModal && selectedInvestigation && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-xl border border-gray-700 p-6 max-w-lg w-full mx-4">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-6 max-w-lg w-full mx-4 shadow-xl">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold text-white">Investigation Details</h3>
+              <h3 className="text-xl font-semibold text-on-surface">Investigation Details</h3>
               <button 
                 onClick={() => setShowInvestigationModal(false)}
-                className="text-gray-400 hover:text-white"
+                className="text-on-surface-variant hover:text-on-surface"
               >
                 <XCircle size={24} />
               </button>
@@ -776,20 +883,20 @@ export default function SurgEyePage() {
             
             <div className="space-y-4">
               <div>
-                <p className="text-gray-400 text-sm">Investigation ID</p>
-                <p className="text-white">{selectedInvestigation.id}</p>
+                <p className="text-on-surface-variant text-sm">Investigation ID</p>
+                <p className="text-on-surface">{selectedInvestigation.id}</p>
               </div>
               
               <div>
-                <p className="text-gray-400 text-sm">Nurse</p>
-                <p className="text-white">{selectedInvestigation.nurse_name}</p>
+                <p className="text-on-surface-variant text-sm">Nurse</p>
+                <p className="text-on-surface">{selectedInvestigation.nurse_name}</p>
               </div>
               
               <div>
-                <p className="text-gray-400 text-sm">Missing Items</p>
+                <p className="text-on-surface-variant text-sm">Missing Items</p>
                 <div className="flex flex-wrap gap-2 mt-1">
                   {Object.entries(selectedInvestigation.missing_items).map(([item, count]) => (
-                    <span key={item} className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-sm">
+                    <span key={item} className="px-2 py-1 bg-error/10 text-error rounded text-sm">
                       {count}x {item}
                     </span>
                   ))}
@@ -797,8 +904,8 @@ export default function SurgEyePage() {
               </div>
               
               <div>
-                <p className="text-gray-400 text-sm">Created</p>
-                <p className="text-white">
+                <p className="text-on-surface-variant text-sm">Created</p>
+                <p className="text-on-surface">
                   {new Date(selectedInvestigation.created_at).toLocaleString()}
                 </p>
               </div>
@@ -806,7 +913,7 @@ export default function SurgEyePage() {
             
             <button
               onClick={() => setShowInvestigationModal(false)}
-              className="w-full mt-6 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"
+              className="w-full mt-6 px-4 py-2 bg-primary text-on-primary rounded-full hover:bg-primary-container transition-colors"
             >
               Close
             </button>
