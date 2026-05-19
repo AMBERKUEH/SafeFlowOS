@@ -1,0 +1,26 @@
+names:
+- Army_navy
+- Bulldog
+- Castroviejo
+- Forceps
+- Frazier
+- Hemostat
+- Iris
+- Mayo_metz
+- Needle
+- Potts
+- Richardson
+- Scalpel
+- Towel_clip
+- Weitlaner
+- Yankauer
+nc: 15
+roboflow:
+  license: CC BY 4.0
+  project: surgical-instruments-zmagm
+  url: https://universe.roboflow.com/abhinav-ytcui/surgical-instruments-zmagm/dataset/1
+  version: 1
+  workspace: abhinav-ytcui
+test: ../test/images
+train: ../train/images
+val: ../valid/images

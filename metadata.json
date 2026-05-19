@@ -1,0 +1,6 @@
+{
+  "name": "SafeFlow OS",
+  "description": "A sophisticated healthcare workspace for clinical management, patient tracking, and AI-assisted clinical insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

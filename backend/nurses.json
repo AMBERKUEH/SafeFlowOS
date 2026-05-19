@@ -1,0 +1,10 @@
+[
+  {"name": "Zhang Wei", "skill": "N3", "ward": "ICU", "unavailable_days": ["Tuesday"]},
+  {"name": "Li Na", "skill": "N2", "ward": "General", "unavailable_days": []},
+  {"name": "Wang Fang", "skill": "N4", "ward": "ER", "unavailable_days": ["Friday"]},
+  {"name": "Chen Jing", "skill": "N2", "ward": "Pediatrics", "unavailable_days": ["Wednesday"]},
+  {"name": "Liu Yang", "skill": "N3", "ward": "ICU", "unavailable_days": []},
+  {"name": "Zhao Min", "skill": "N2", "ward": "General", "unavailable_days": ["Monday"]},
+  {"name": "Sun Lei", "skill": "N3", "ward": "ER", "unavailable_days": ["Thursday"]},
+  {"name": "Wu Ting", "skill": "N1", "ward": "General", "unavailable_days": []}
+]

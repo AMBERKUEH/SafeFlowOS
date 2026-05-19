@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-dotenv
+python-multipart
+requests
+pillow
+groq
+acontext
+pdf2image
+faker

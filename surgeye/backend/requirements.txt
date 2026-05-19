@@ -1,0 +1,19 @@
+# SurgEye Backend Dependencies
+# Python 3.8+ required
+
+# Core ML & Computer Vision (LOCAL - no API lag!)
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Web Framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+websockets>=11.0
+
+# Utilities
+python-multipart>=0.0.6
+pillow>=10.0.0
+
+# Optional: Roboflow for dataset download
+# roboflow>=1.1.0
