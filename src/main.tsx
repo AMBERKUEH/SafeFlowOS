@@ -10,9 +10,12 @@ import Processing from "./nurseflow/pages/Processing";
 import SchedulePage from "./nurseflow/pages/SchedulePage";
 import Dashboard from "./nurseflow/pages/Dashboard";
 import SurgEyePage from "./nurseflow/pages/SurgEye";
+import PatientsPage from "./nurseflow/pages/Patients";
 
 const router = createBrowserRouter([
   { path: "/", Component: App },
+  { path: "/patients", Component: PatientsPage },
+  { path: "/nurseflow/patients", Component: PatientsPage },
   { path: "/nurseflow", Component: Upload },
   { path: "/nurseflow/upload", Component: Upload },
   { path: "/nurseflow/processing", Component: Processing },

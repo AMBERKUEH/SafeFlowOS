@@ -444,7 +444,7 @@ export default function SurgEyePage() {
 
             <div className="flex-1 space-y-1 overflow-y-auto custom-scrollbar">
               <SidebarItem icon={LayoutDashboard} label="Dashboard" href="/" />
-              <SidebarItem icon={Users} label="Patients" />
+              <SidebarItem icon={Users} label="Patients" href="/patients" />
               <SidebarItem icon={Calendar} label="Nurse Schedule" href="/nurseflow/upload" />
               <SidebarItem icon={Microscope} label="SurgEye Analysis" active href="/nurseflow/surgeye" />
               <SidebarItem icon={FileText} label="Records" />

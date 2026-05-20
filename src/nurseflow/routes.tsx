@@ -4,6 +4,7 @@ import Processing from "./pages/Processing";
 import Dashboard from "./pages/Dashboard";
 import SchedulePage from "./pages/SchedulePage";
 import SurgEyePage from "./pages/SurgEye";
+import PatientsPage from "./pages/Patients";
 
 export const router = createBrowserRouter([
   {
@@ -29,5 +30,9 @@ export const router = createBrowserRouter([
   {
     path: "/surgeye",
     Component: SurgEyePage,
+  },
+  {
+    path: "/patients",
+    Component: PatientsPage,
   },
 ]);
