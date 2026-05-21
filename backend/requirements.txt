@@ -8,3 +8,4 @@ groq
 acontext
 pdf2image
 faker
+inference-sdk
