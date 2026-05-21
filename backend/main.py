@@ -13,6 +13,7 @@ if sys.platform == "win32":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 import json
 import tempfile
+import shutil
 import re
 
 # Add agents directory to path
@@ -20,7 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "agents"))
 
 from agents.agent6_surgeye import SurgEyeAgent
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
@@ -580,35 +581,61 @@ def handle_emergency(request: EmergencyRequest):
         print(f"  ✗ EmergencyAgent failed: {e}")
         raise HTTPException(status_code=500, detail=f"Emergency Agent failed — {str(e)}")
 
-
-# POST /api/surgeye/baseline-scan - Perform baseline scan
-class SurgEyeBaselineRequest(BaseModel):
-    surgery_id: str
-
-class SurgEyePostopRequest(BaseModel):
-    surgery_id: str
-    baseline_items: list[str]
-
 @app.post("/api/surgeye/baseline-scan")
-def surgeye_baseline_scan(request: SurgEyeBaselineRequest):
+async def surgeye_baseline_scan(
+    surgery_id: str = Form(default="S001"),
+    file: UploadFile = File(...)
+):
     if not surgeye_agent:
         raise HTTPException(status_code=503, detail="SurgEye Agent not available")
-    return surgeye_agent.baseline_scan(request.surgery_id)
+
+    tmp_path = f"temp_baseline_{surgery_id}.jpg"
+    with open(tmp_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        result = surgeye_agent.baseline_scan(surgery_id, tmp_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    return result
 
 @app.post("/api/surgeye/postop-scan")
-def surgeye_postop_scan(request: SurgEyePostopRequest):
+async def surgeye_postop_scan(
+    surgery_id: str = Form(default="S001"),
+    baseline_items: str = Form(...),
+    file: UploadFile = File(...)
+):
     if not surgeye_agent:
         raise HTTPException(status_code=503, detail="SurgEye Agent not available")
-    result = surgeye_agent.postop_scan(
-        surgery_id=request.surgery_id,
-        baseline_items=request.baseline_items
-    )
-    if graph_db and result["missing_items"]:
-        graph_db.log_missing_instrument(
-            surgery_id=request.surgery_id,
-            missing_items=result["missing_items"]
+
+    items = json.loads(baseline_items)
+
+    tmp_path = f"temp_postop_{surgery_id}.jpg"
+    with open(tmp_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        postop = surgeye_agent.postop_scan(surgery_id, items, tmp_path)
+        # Safety Validator Agent runs automatically after post-op scan
+        validation = surgeye_agent.validate_safety(
+            surgery_id,
+            items,
+            postop["detected_items"]
         )
-    return result
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    # merge postop + validation into one response
+    return {**postop, **validation}
+
+@app.get("/api/surgeye/alerts")
+def get_surgeye_alerts():
+    if not surgeye_agent:
+        raise HTTPException(status_code=503, detail="SurgEye Agent not available")
+    return {"alerts": surgeye_agent.get_alert_log()}
 
 # GET /api/context - Get memory context
 @app.get("/api/context")
