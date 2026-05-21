@@ -159,8 +159,8 @@ export default function App() {
 
             {/* Nav Links */}
             <div className="flex-1 space-y-1 overflow-y-auto custom-scrollbar">
-              <SidebarItem icon={LayoutDashboard} label="Dashboard" active />
-              <SidebarItem icon={Users} label="Patients" />
+              <SidebarItem icon={LayoutDashboard} label="Dashboard" href="/" active />
+              <SidebarItem icon={Users} label="Patients" href="/patients" />
               <SidebarItem icon={Calendar} label="Nurse Schedule" href="/nurseflow/upload" />
               <SidebarItem icon={Microscope} label="SurgEye Analysis" href="/nurseflow/surgeye" />
               <SidebarItem icon={FileText} label="Records" />
