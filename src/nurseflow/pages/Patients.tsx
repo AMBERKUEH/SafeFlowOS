@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Users, LayoutDashboard, Calendar, Microscope, FileText, Settings, 
-  HelpCircle, User, Menu, Bell, Grid, ChevronRight, Mic, MicOff, 
+import {
+  Users, LayoutDashboard, Calendar, Microscope, FileText, Settings,
+  HelpCircle, User, Menu, Bell, Grid, ChevronRight, Mic, MicOff,
   Check, X, FileDown, ShieldCheck, Edit3, ArrowRight, Loader
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
@@ -13,11 +13,10 @@ const SidebarItem = ({ icon: Icon, label, active = false, href = "#" }: { icon: 
     href={href}
     whileHover={{ scale: 0.98 }}
     whileTap={{ scale: 0.95 }}
-    className={`flex items-center gap-4 px-4 py-2.5 rounded-lg transition-colors group ${
-      active 
-        ? 'bg-surface-container-high text-on-surface' 
-        : 'text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface'
-    }`}
+    className={`flex items-center gap-4 px-4 py-2.5 rounded-lg transition-colors group ${active
+      ? 'bg-surface-container-high text-on-surface'
+      : 'text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface'
+      }`}
   >
     <Icon size={20} className={active ? 'text-secondary' : 'group-hover:text-secondary transition-colors'} />
     <span className={`text-[15px] ${active ? 'font-medium' : 'font-normal'}`}>{label}</span>
@@ -28,14 +27,14 @@ export default function PatientsPage() {
   const HARD_CODED_DOCTOR_NAME = 'Dr. Edward Smith';
   const HARD_CODED_SIGNATURE_CODE = 'SF-VERIFIED-9824';
   const [isSidebarOpen, setSidebarOpen] = useState(true);
-  
+
   // Workflow steps: 'idle' | 'recording' | 'summarizing' | 'review' | 'confirmed'
   const [step, setStep] = useState<'idle' | 'recording' | 'summarizing' | 'review'>('idle');
-  
+
   // Dictation States
   const [transcript, setTranscript] = useState('');
   const [recognition, setRecognition] = useState<any>(null);
-  
+
   // SOAP States
   const [soapNotes, setSoapNotes] = useState({
     subjective: '',
@@ -43,13 +42,13 @@ export default function PatientsPage() {
     assessment: '',
     plan: ''
   });
-  
+
   // Confirmation states
   const [doctorStatus, setDoctorStatus] = useState<'approved' | 'edit' | null>(null);
-  
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const visualizerAnimationRef = useRef<number | null>(null);
-  const simulateVoiceInputRef = useRef<() => void>(() => {});
+  const simulateVoiceInputRef = useRef<() => void>(() => { });
 
   // Simulated Voice input — passes fullText directly to avoid stale React state closure
   const simulateVoiceInput = () => {
@@ -61,7 +60,7 @@ export default function PatientsPage() {
     ];
     let index = 0;
     let fullText = "";
-    
+
     const interval = setInterval(() => {
       if (index < script.length) {
         fullText += script[index];
@@ -88,7 +87,7 @@ export default function PatientsPage() {
       rec.continuous = true;
       rec.interimResults = true;
       rec.lang = 'en-US';
-      
+
       rec.onresult = (event: any) => {
         let currentTranscript = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -98,7 +97,7 @@ export default function PatientsPage() {
           setTranscript(currentTranscript);
         }
       };
-      
+
       rec.onerror = (event: any) => {
         console.error('Speech recognition error:', event.error);
         if (event.error === 'not-allowed') {
@@ -106,7 +105,7 @@ export default function PatientsPage() {
           simulateVoiceInputRef.current();
         }
       };
-      
+
       setRecognition(rec);
     }
   }, []);
@@ -117,36 +116,36 @@ export default function PatientsPage() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     let phase = 0;
     const draw = () => {
       if (!canvas || !ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
+
       const width = canvas.width;
       const height = canvas.height;
       const centerY = height / 2;
-      
+
       ctx.beginPath();
       ctx.strokeStyle = step === 'recording' ? 'rgba(70, 72, 212, 0.8)' : 'rgba(76, 69, 70, 0.2)';
       ctx.lineWidth = 3;
-      
+
       const amplitude = step === 'recording' ? (25 + Math.sin(phase * 0.15) * 8) : 2;
       const frequency = step === 'recording' ? 0.03 : 0.005;
-      
+
       for (let x = 0; x < width; x++) {
         const y = centerY + Math.sin(x * frequency + phase) * amplitude * Math.sin(x * Math.PI / width);
         if (x === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
       ctx.stroke();
-      
+
       phase += step === 'recording' ? 0.2 : 0.02;
       visualizerAnimationRef.current = requestAnimationFrame(draw);
     };
-    
+
     draw();
-    
+
     return () => {
       if (visualizerAnimationRef.current) cancelAnimationFrame(visualizerAnimationRef.current);
     };
@@ -180,31 +179,31 @@ export default function PatientsPage() {
       }
     }
     setStep('summarizing');
-    
+
     // Guard: only use finalText if it is actually a string (not a React event object)
     const resolvedText = typeof finalText === 'string' ? finalText : transcript;
     const text = resolvedText.trim();
-    
+
     if (!text) {
       console.warn('No transcript text available to summarize.');
       setStep('review');
       return;
     }
-    
+
     console.log('Sending to Groq AI:', text.slice(0, 80) + '...');
-    
+
     try {
       const response = await fetch('http://localhost:8000/api/summarize-consultation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transcript: text }),
       });
-      
+
       if (!response.ok) {
         const errBody = await response.text();
         throw new Error(`Backend error ${response.status}: ${errBody}`);
       }
-      
+
       const soapData = await response.json();
       setSoapNotes({
         subjective: soapData.subjective || '',
@@ -224,13 +223,13 @@ export default function PatientsPage() {
   // Local SOAP compiler
   const runSoapSummarizer = (text: string) => {
     const lower = text.toLowerCase();
-    
+
     // Subjective details
     let s = "Patient presents with symptoms captured via voice dictation: ";
     if (lower.includes("cough")) s += "Reports a persistent dry cough. ";
     if (lower.includes("tightness") || lower.includes("chest")) s += "Complains of chest tightness and shortness of breath. ";
     if (s.length === 55) s += text;
-    
+
     // Objective details
     let o = "Vitals and physical observations: \n";
     if (lower.includes("140") || lower.includes("90") || lower.includes("blood pressure")) {
@@ -244,7 +243,7 @@ export default function PatientsPage() {
       o += "- Lungs: Clear to auscultation bilaterally.\n";
     }
     o += "- Gen: Conscious, in mild respiratory distress.";
-    
+
     // Assessment details
     let a = "Clinical Impression:\n";
     if (lower.includes("cough") && (lower.includes("wheezing") || lower.includes("asthma") || lower.includes("inhaler"))) {
@@ -254,7 +253,7 @@ export default function PatientsPage() {
     } else {
       a += "1. Routine Consultation Review\n2. Vital signs within normal parameters";
     }
-    
+
     // Plan details
     let p = "Therapeutic Regimen:\n";
     if (lower.includes("albuterol") || lower.includes("inhaler")) {
@@ -264,130 +263,130 @@ export default function PatientsPage() {
     }
     p += "- Instructed patient on alarm symptoms (worsening dyspnea, fever).\n";
     p += "- Return to clinic in 14 days for follow-up evaluation.";
-    
+
     return { subjective: s, objective: o, assessment: a, plan: p };
   };
 
   // Sign off & Export PDF
   const handleExportPDF = () => {
     if (doctorStatus !== 'approved') return;
-    
+
     const doc = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
       format: 'a4'
     });
-    
+
     const dateStr = new Date().toLocaleDateString('en-US', { day: '2-digit', month: 'long', year: 'numeric' });
     const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    
+
     // Theme royal blue
     const primaryColor = [70, 72, 212];
-    
+
     // --- Elegant Header Banner ---
     doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
     doc.rect(0, 0, 210, 32, 'F');
-    
+
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(18);
     doc.text('SAFEFLOW OS CLINICAL PORTAL', 15, 13);
-    
+
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.text('OFFICIAL ENCOUNTER SUMMARY & SOAP RECORD', 15, 20);
-    doc.text(`Attested and Digitally Signed by Physician`, 15, 25);
-    
+    doc.text(`Attested and Digitally Signed by Doctor`, 15, 25);
+
     // --- Document Metadata Table ---
     doc.setTextColor(0, 0, 0);
     doc.setFillColor(245, 246, 248);
     doc.rect(15, 40, 180, 22, 'F');
     doc.rect(15, 40, 180, 22, 'S');
-    
+
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
-    doc.text('ENCOUNTER PHYSICIAN:', 20, 47);
+    doc.text('ENCOUNTER DOCTOR:', 20, 47);
     doc.text('RECORDING TIMESTAMP:', 20, 55);
     doc.text('SIGNATURE STATUS:', 110, 47);
     doc.text('VERIFICATION CODE:', 110, 55);
-    
+
     doc.setFont('helvetica', 'normal');
     doc.text(`${HARD_CODED_DOCTOR_NAME}`, 65, 47);
     doc.text(`${dateStr} at ${timeStr}`, 65, 55);
     doc.text('APPROVED & ATTESTED', 150, 47);
     doc.text(HARD_CODED_SIGNATURE_CODE, 150, 55);
-    
+
     // --- SOAP note contents layout ---
     let y = 74;
-    
+
     const renderBox = (title: string, text: string) => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(10.5);
       doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
       doc.text(title, 15, y);
-      
+
       doc.setDrawColor(200, 200, 200);
       doc.line(15, y + 2, 195, y + 2);
-      
+
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9.5);
       doc.setTextColor(50, 50, 50);
-      
+
       const lines = doc.splitTextToSize(text, 180);
       doc.text(lines, 15, y + 8);
-      
+
       y += (lines.length * 5) + 15;
     };
-    
+
     renderBox('SUBJECTIVE (S)', soapNotes.subjective);
     renderBox('OBJECTIVE (O)', soapNotes.objective);
     renderBox('ASSESSMENT (A)', soapNotes.assessment);
-    
+
     if (y > 230) {
       doc.addPage();
       y = 20;
     }
-    
+
     renderBox('PLAN (P)', soapNotes.plan);
-    
+
     // --- Digital Attestation Seal ---
     y += 5;
     if (y > 240) {
       doc.addPage();
       y = 20;
     }
-    
+
     doc.setFillColor(235, 255, 235);
     doc.setDrawColor(0, 150, 0);
     doc.rect(15, y, 180, 20, 'F');
     doc.rect(15, y, 180, 20, 'S');
-    
+
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9.5);
     doc.setTextColor(0, 120, 0);
     doc.text('✓ ELECTRONIC CLINICAL SIGN-OFF CERTIFICATE', 20, y + 6);
-    
+
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.setTextColor(50, 100, 50);
     doc.text(`This clinical document has been electronically signed and attested by ${HARD_CODED_DOCTOR_NAME} on ${dateStr} at ${timeStr}.`, 20, y + 11);
     doc.text(`Digital Verification Code: ${HARD_CODED_SIGNATURE_CODE} (Generated securely by SafeFlow OS).`, 20, y + 15);
-    
+
     // Attestation signature text line
     y += 35;
     doc.setDrawColor(150, 150, 150);
     doc.line(125, y, 195, y);
-    
+
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
     doc.setTextColor(0, 0, 0);
-    doc.text('VERIFIED PHYSICIAN SIGNATURE', 125, y + 5);
-    
+    doc.text('VERIFIED DOCTOR SIGNATURE', 138, y + 5);
+
     doc.setFont('helvetica', 'oblique');
     doc.setFontSize(11);
     doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-    doc.text(HARD_CODED_DOCTOR_NAME, 135, y - 3.5);
-    
+    doc.text(HARD_CODED_DOCTOR_NAME, 145, y - 3.5);
+
     // Save report
     doc.save(`Clinical_Summary_${HARD_CODED_DOCTOR_NAME.replace(/\s+/g, '_')}.pdf`);
   };
@@ -399,7 +398,7 @@ export default function PatientsPage() {
 
   return (
     <div className="flex h-screen bg-surface overflow-hidden font-sans">
-      
+
       {/* Sidebar Navigation */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -441,7 +440,7 @@ export default function PatientsPage() {
 
       {/* Main Workspace Column */}
       <div className="flex-1 flex flex-col min-w-0 relative bg-surface-container-low">
-        
+
         {/* Navigation Breadcrumb header */}
         <header className="flex justify-between items-center px-6 lg:px-container-margin w-full bg-surface-container-lowest h-16 border-b border-outline-variant z-30">
           <div className="flex items-center gap-4">
@@ -454,7 +453,7 @@ export default function PatientsPage() {
               <span className="text-on-surface font-medium">Patients Dictation Hub</span>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-4">
             <button className="p-2 text-on-surface-variant hover:text-secondary rounded-full hover:bg-surface-container-low relative">
               <Bell size={18} />
@@ -470,7 +469,7 @@ export default function PatientsPage() {
         {/* Simplifed dictation page workspace */}
         <main className="flex-1 overflow-y-auto p-6 md:p-12 lg:px-24 pb-24 flex items-center justify-center">
           <div className="w-full max-w-3xl bg-surface-container-lowest border border-outline-variant rounded-2xl p-8 md:p-12 shadow-md">
-            
+
             {/* Step Header */}
             <div className="text-center mb-8">
               <span className="text-[11px] font-bold uppercase tracking-widest text-secondary block mb-1">Encounter Dictation Copilot</span>
@@ -480,7 +479,7 @@ export default function PatientsPage() {
             {/* --- STATE 1: IDLE / RECORDING --- */}
             {(step === 'idle' || step === 'recording') && (
               <div className="space-y-8 flex flex-col items-center">
-                
+
                 {/* Visualizer audio display wave */}
                 <div className="w-full bg-surface-container-low rounded-xl border border-outline-variant overflow-hidden h-28 flex flex-col justify-center items-center relative p-3">
                   <canvas ref={canvasRef} width="600" height="90" className="w-full h-[90px] opacity-80" />
@@ -509,7 +508,7 @@ export default function PatientsPage() {
                       <MicOff size={38} className="text-white" />
                     </button>
                   )}
-                  
+
                   <p className="text-sm font-semibold text-on-surface">
                     {step === 'idle' ? 'Click to Start Recording' : 'Recording Conversation... Click to Stop'}
                   </p>
@@ -543,7 +542,7 @@ export default function PatientsPage() {
             {/* --- STATE 3: SOAP NOTE REVIEW (OK / NOT OK) --- */}
             {step === 'review' && (
               <div className="space-y-6">
-                
+
                 <div className="flex items-center justify-between pb-3 border-b border-outline-variant mb-4">
                   <h3 className="text-[16px] font-semibold text-on-surface">AI-Generated SOAP Summary</h3>
                   <span className="text-[10px] font-bold text-secondary bg-secondary/10 px-2.5 py-0.5 rounded-full border border-secondary/15">
@@ -563,7 +562,7 @@ export default function PatientsPage() {
                       className="w-full bg-gray-100 text-gray-900 text-xs border border-gray-300 rounded-xl p-4 focus:outline-none focus:ring-1 focus:ring-secondary/40 focus:border-secondary font-medium leading-relaxed disabled:opacity-70"
                     />
                   </div>
-                  
+
                   <div className="space-y-1">
                     <span className="text-[10px] font-bold text-secondary uppercase tracking-widest block">Objective (O)</span>
                     <textarea
@@ -645,11 +644,11 @@ export default function PatientsPage() {
                       <ShieldCheck size={20} />
                       <span className="text-xs font-bold uppercase tracking-wider">Clinical Attestation Signed</span>
                     </div>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
                       <div className="space-y-1">
-                        <label className="text-[10px] text-green-950 font-bold uppercase block">Attesting Physician</label>
-                        <div className="w-full bg-white border border-green-200 rounded-lg px-3 py-2 text-xs font-semibold">
+                        <label className="text-[10px] text-green-950 font-bold uppercase block">Attesting Doctor</label>
+                        <div className="w-full bg-white border border-green-200 rounded-lg px-3 py-2 text-xs font-semibold text-black">
                           {HARD_CODED_DOCTOR_NAME}
                         </div>
                       </div>

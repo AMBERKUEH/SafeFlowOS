@@ -5,6 +5,12 @@ All endpoints use real agents - NO hardcoded data.
 """
 import sys
 import os
+import io
+
+# Prevent UnicodeEncodeError on Windows terminals when printing emojis/unicode characters
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 import json
 import tempfile
 import re
