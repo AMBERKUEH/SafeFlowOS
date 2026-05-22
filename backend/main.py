@@ -22,7 +22,12 @@ from urllib.parse import quote
 # Add agents directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "agents"))
 
-from agents.agent6_surgeye import SurgEyeAgent
+try:
+    from agents.agent6_surgeye import SurgEyeAgent
+    surgeye_import_error = None
+except Exception as e:
+    SurgEyeAgent = None
+    surgeye_import_error = e
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -118,6 +123,8 @@ except Exception as e:
     memory_agent = None
     
 try:
+    if SurgEyeAgent is None:
+        raise ImportError(str(surgeye_import_error))
     surgeye_agent = SurgEyeAgent()
     print("✓ SurgEyeAgent initialized")
 except Exception as e:

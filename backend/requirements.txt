@@ -8,4 +8,5 @@ groq>=1.2.0
 acontext
 pdf2image
 faker
-inference-sdk
+# Roboflow's inference-sdk is optional for SurgEye and is not published for Python 3.13 yet.
+inference-sdk; python_version < "3.13"
