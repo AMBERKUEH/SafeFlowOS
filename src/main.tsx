@@ -1,9 +1,9 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { createBrowserRouter, RouterProvider } from 'react-router';
+import { createBrowserRouter, redirect, RouterProvider } from 'react-router';
 import App from './App.tsx';
 import './index.css';
-import './nurseflow/styles/theme.css'; // NurseFlow theme
+import './nurseflow/styles/theme.css';
 
 import Upload from "./nurseflow/pages/Upload";
 import Processing from "./nurseflow/pages/Processing";
@@ -11,23 +11,33 @@ import SchedulePage from "./nurseflow/pages/SchedulePage";
 import Dashboard from "./nurseflow/pages/Dashboard";
 import SurgEyePage from "./nurseflow/pages/SurgEye";
 import PatientsPage from "./nurseflow/pages/Patients";
+import NurseflowLayout from "./nurseflow/components/NurseflowLayout";
 
 const router = createBrowserRouter([
   { path: "/", Component: App },
   { path: "/patients", Component: PatientsPage },
-  { path: "/nurseflow/patients", Component: PatientsPage },
-  { path: "/nurseflow", Component: Upload },
-  { path: "/nurseflow/upload", Component: Upload },
-  { path: "/nurseflow/processing", Component: Processing },
-  { path: "/nurseflow/dashboard", Component: Dashboard },
-  { path: "/nurseflow/schedule", Component: SchedulePage },
+  {
+    path: "/nurseflow",
+    Component: NurseflowLayout,
+    children: [
+      { index: true, Component: Upload },
+      { path: "upload", Component: Upload },
+      { path: "processing", Component: Processing },
+      { path: "dashboard", Component: Dashboard },
+      { path: "schedule", Component: SchedulePage },
+      { path: "patients", Component: PatientsPage },
+    ],
+  },
+  {
+    Component: NurseflowLayout,
+    children: [
+      { path: "/upload", Component: Upload },
+      { path: "/schedule", Component: SchedulePage },
+    ],
+  },
+  { path: "/processing", loader: () => redirect("/nurseflow/processing") },
+  { path: "/dashboard", loader: () => redirect("/nurseflow/dashboard") },
   { path: "/nurseflow/surgeye", Component: SurgEyePage },
-  // Map absolute paths used inside nurseflow to /nurseflow prefix to avoid breaking their links, 
-  // or better, just provide root aliases for them if they hardcode "/dashboard"
-  { path: "/upload", Component: Upload },
-  { path: "/processing", Component: Processing },
-  { path: "/dashboard", Component: Dashboard },
-  { path: "/schedule", Component: SchedulePage },
   { path: "/surgeye", Component: SurgEyePage },
 ]);
 

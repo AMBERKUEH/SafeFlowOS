@@ -8,29 +8,26 @@ import io
 import json
 import base64
 import tempfile
+import requests
 from typing import List, Dict, Any
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def call_groq_vision(image_base64: str, mime_type: str = "image/png") -> str:
     """Call Groq Vision API with the given image."""
-    try:
-        from groq import Groq
-    except ImportError:
-        raise ImportError("groq not installed. Run: pip install groq")
-    
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY environment variable not set.")
-    
-    client = Groq(api_key=api_key)
-    
+
     # Create data URL for the image
     image_data_url = f"data:{mime_type};base64,{image_base64}"
-    
-    response = client.chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",   
-        messages=[
+
+    payload = {
+        "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "messages": [
             {
                 "role": "user",
                 "content": [
@@ -50,15 +47,28 @@ Return ONLY the JSON array, no markdown, no explanation."""
                     {
                         "type": "image_url",
                         "image_url": {"url": image_data_url}
-                    }
-                ]
+                    },
+                ],
             }
         ],
-        temperature=0.3,
-        max_tokens=2048
+        "temperature": 0.3,
+        "max_tokens": 2048,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=60,
     )
-    
-    return response.choices[0].message.content
+    response.raise_for_status()
+    data = response.json()
+    return data["choices"][0]["message"]["content"]
 
 
 def find_poppler_path() -> str:
@@ -68,7 +78,7 @@ def find_poppler_path() -> str:
     
     # Common installation paths to check
     possible_paths = [
-        r"C:\Users\pangt\Downloads\poppler-25.12.0\Library\bin",
+        r"C:\poppler\Library\bin",
         r"C:\poppler\bin",
         r"C:\Program Files\poppler\bin",
         r"C:\Program Files (x86)\poppler\bin",

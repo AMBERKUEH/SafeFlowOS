@@ -52,13 +52,19 @@ const WARD: Record<string, { bg: string; text: string; border: string }> = {
 };
 
 // ── helpers ────────────────────────────────────────────────────────────────
+function matchesNurseName(scheduledName: string, nurseName: string) {
+  const scheduled = scheduledName.toLowerCase().trim();
+  const nurse = nurseName.toLowerCase().trim();
+  return scheduled === nurse || scheduled.includes(nurse) || nurse.includes(scheduled);
+}
+
 function getNurseShift(name: string, fullDay: string, schedule: any): string | null {
   if (!schedule) return null;
   const d = schedule[fullDay];
   if (!d) return null;
-  if (d.morning?.includes(name)) return 'morning';
-  if (d.afternoon?.includes(name)) return 'afternoon';
-  if (d.night?.includes(name)) return 'night';
+  if (d.morning?.some((scheduledName: string) => matchesNurseName(scheduledName, name))) return 'morning';
+  if (d.afternoon?.some((scheduledName: string) => matchesNurseName(scheduledName, name))) return 'afternoon';
+  if (d.night?.some((scheduledName: string) => matchesNurseName(scheduledName, name))) return 'night';
   return null;
 }
 
@@ -66,9 +72,9 @@ function getWeekly(name: string, schedule: any) {
   let morning = 0, afternoon = 0, night = 0;
   if (schedule) {
     FULL_DAY_NAMES.forEach(day => {
-      if (schedule[day]?.morning?.includes(name)) morning++;
-      if (schedule[day]?.afternoon?.includes(name)) afternoon++;
-      if (schedule[day]?.night?.includes(name)) night++;
+      if (schedule[day]?.morning?.some((scheduledName: string) => matchesNurseName(scheduledName, name))) morning++;
+      if (schedule[day]?.afternoon?.some((scheduledName: string) => matchesNurseName(scheduledName, name))) afternoon++;
+      if (schedule[day]?.night?.some((scheduledName: string) => matchesNurseName(scheduledName, name))) night++;
     });
   }
   return { morning, afternoon, night, total: morning + afternoon + night };
@@ -145,6 +151,7 @@ function TimelineBar({ shiftKey, highlighted, isOff }: {
 // ── Main component ─────────────────────────────────────────────────────────
 export function WeeklySchedule({ nurses, schedule, highlightCell }: WeeklyScheduleProps) {
   const [activeDay, setActiveDay] = useState(0);
+  const [viewMode, setViewMode] = useState<'day' | 'week'>('day');
   const [tooltip, setTooltip] = useState<{ nurse: Nurse; weekly: ReturnType<typeof getWeekly>; x: number; y: number } | null>(null);
 
   const fullDay = FULL_DAY_NAMES[activeDay];
@@ -163,56 +170,136 @@ export function WeeklySchedule({ nurses, schedule, highlightCell }: WeeklySchedu
   const getCount = (shiftKey: string) =>
     schedule?.[fullDay]?.[shiftKey]?.length ?? 0;
 
+  const weekOverview = FULL_DAY_NAMES.reduce(
+    (acc, day) => {
+      acc.morning += schedule?.[day]?.morning?.length ?? 0;
+      acc.afternoon += schedule?.[day]?.afternoon?.length ?? 0;
+      acc.night += schedule?.[day]?.night?.length ?? 0;
+      return acc;
+    },
+    { morning: 0, afternoon: 0, night: 0 }
+  );
+  const weekTotal = weekOverview.morning + weekOverview.afternoon + weekOverview.night;
+  const getShiftNames = (day: string, shiftKey: string): string[] =>
+    schedule?.[day]?.[shiftKey] ?? [];
+
   return (
-    <div style={{ userSelect: 'none' }}>
+    <div className="select-none">
       {/* Title */}
-      <h3 style={{
-        fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '11px',
-        color: '#00D4FF', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '14px',
-      }}>Weekly Schedule</h3>
+      <h3 className="mb-3.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary">Weekly Schedule</h3>
 
       {/* Day tabs */}
-      <div style={{ display: 'flex', gap: '2px', marginBottom: '12px' }}>
+      <div className="mb-3 flex gap-0.5">
         {DAYS.map((day, idx) => {
           const count = getDayStaffCount(idx);
           const active = idx === activeDay;
           const weekend = idx >= 5;
           const empty = count === 0;
           return (
-            <button key={day} onClick={() => setActiveDay(idx)} style={{
-              flex: 1, padding: '7px 4px', borderRadius: '6px', cursor: 'pointer',
-              border: active
-                ? '1px solid rgba(0,212,255,0.55)'
-                : empty
-                ? '1px solid rgba(255,61,90,0.35)'
-                : '1px solid rgba(255,255,255,0.05)',
-              background: active
-                ? 'rgba(0,212,255,0.13)'
-                : empty
-                ? 'rgba(255,61,90,0.07)'
-                : weekend
-                ? 'rgba(255,255,255,0.015)'
-                : 'rgba(255,255,255,0.025)',
-              transition: 'all 0.15s ease',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px',
-            }}>
-              <span style={{
-                fontSize: '10px', fontFamily: 'Syne, sans-serif', fontWeight: 700,
-                letterSpacing: '0.8px',
-                color: active ? '#00D4FF' : empty ? '#FF3D5A' : weekend ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.55)',
-              }}>
+            <button
+              key={day}
+              onClick={() => {
+                setActiveDay(idx);
+                setViewMode('day');
+              }}
+              className={`flex flex-1 cursor-pointer flex-col items-center gap-0.5 rounded-md border px-1 py-1.5 transition-colors ${
+                active && viewMode === 'day'
+                  ? 'border-secondary/60 bg-secondary/10'
+                  : empty
+                  ? 'border-error/30 bg-error/10'
+                  : weekend
+                  ? 'border-outline-variant bg-surface-container-lowest'
+                  : 'border-outline-variant bg-surface-container-low'
+              }`}
+            >
+              <span className={`text-[10px] font-semibold tracking-[0.08em] ${active && viewMode === 'day' ? 'text-secondary' : empty ? 'text-error' : 'text-on-surface-variant'}`}>
                 {day.toUpperCase()}
               </span>
-              <span style={{ fontSize: '9px', color: active ? 'rgba(0,212,255,0.7)' : empty ? 'rgba(255,61,90,0.7)' : 'rgba(255,255,255,0.2)' }}>
+              <span className={`text-[9px] ${active && viewMode === 'day' ? 'text-secondary/80' : empty ? 'text-error/80' : 'text-on-surface-variant'}`}>
                 {empty ? 'EMPTY' : `${count} staff`}
               </span>
             </button>
           );
         })}
+        <button
+          type="button"
+          onClick={() => setViewMode('week')}
+          className={`ml-1 rounded-md border px-2 py-1.5 text-right transition-colors ${
+            viewMode === 'week'
+              ? 'border-secondary/60 bg-secondary/10'
+              : 'border-outline-variant bg-surface-container-low hover:bg-surface-container-high'
+          }`}
+          title="Weekly overview summary"
+        >
+          <p className="text-[9px] font-semibold uppercase tracking-[0.08em] text-on-surface-variant">Week</p>
+          <p className="text-xs font-semibold text-on-surface">{weekTotal}</p>
+          <p className="text-[9px] text-on-surface-variant">
+            M{weekOverview.morning} A{weekOverview.afternoon} N{weekOverview.night}
+          </p>
+        </button>
       </div>
 
+      {viewMode === 'week' && (
+        <div className="mb-3 grid gap-2">
+          {FULL_DAY_NAMES.map((day, idx) => {
+            const dayTotal = SHIFT_BANDS.reduce((sum, band) => sum + getShiftNames(day, band.key).length, 0);
+            return (
+              <div
+                key={`${day}-week`}
+                className="overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest"
+              >
+                <div className="flex items-center justify-between border-b border-outline-variant bg-surface-container-low px-3 py-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary">{day}</span>
+                  <span className="text-[10px] text-on-surface-variant">{dayTotal} assigned</span>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setActiveDay(idx);
+                    setViewMode('day');
+                  }}
+                  className="grid w-full gap-0 text-left hover:bg-surface-container-low"
+                >
+                  {SHIFT_BANDS.map((band) => {
+                    const names = getShiftNames(day, band.key);
+                    return (
+                      <span
+                        key={`${band.key}-${day}`}
+                        className="grid grid-cols-[84px_1fr] items-start gap-2 border-b border-outline-variant/60 px-3 py-2 last:border-b-0"
+                      >
+                        <span style={{ color: band.text }} className="flex items-center gap-1.5 text-xs font-semibold">
+                          <span style={{ width: '7px', height: '7px', borderRadius: '2px', background: band.color, border: `1px solid ${band.accent}` }} />
+                          {band.label}
+                        </span>
+                        <span className="flex min-h-5 flex-wrap gap-1">
+                          {names.length > 0 ? (
+                            names.map((name) => (
+                              <span
+                                key={name}
+                                className="max-w-full truncate rounded bg-surface-container-high px-1.5 py-0.5 text-[10px] text-on-surface-variant"
+                                title={name}
+                              >
+                                {name}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-[10px] text-on-surface-variant">Empty</span>
+                          )}
+                        </span>
+                      </span>
+                    );
+                  })}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {viewMode === 'day' && (
+        <>
       {/* Shift coverage chips for active day */}
-      <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', alignItems: 'center' }}>
+      <div className="mb-2.5 flex items-center gap-1.5">
         {SHIFT_BANDS.map(band => {
           const count = getCount(band.key);
           const empty = count === 0;
@@ -220,7 +307,7 @@ export function WeeklySchedule({ nurses, schedule, highlightCell }: WeeklySchedu
           return (
             <div key={band.key} style={{
               display: 'flex', alignItems: 'center', gap: '5px',
-              padding: '4px 10px', borderRadius: '5px',
+              padding: '4px 10px', borderRadius: '6px',
               background: empty ? 'rgba(255,61,90,0.10)' : under ? 'rgba(255,193,7,0.09)' : band.color,
               border: `1px solid ${empty ? 'rgba(255,61,90,0.4)' : under ? 'rgba(255,193,7,0.4)' : band.accent}`,
             }}>
@@ -237,11 +324,11 @@ export function WeeklySchedule({ nurses, schedule, highlightCell }: WeeklySchedu
         })}
 
         {/* Legend */}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '10px', alignItems: 'center' }}>
+        <div className="ml-auto flex items-center gap-2.5">
           {SHIFT_BANDS.map(b => (
             <div key={b.key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: b.color, border: `1px solid ${b.accent}` }} />
-              <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.28)' }}>{b.range}</span>
+              <span className="text-[9px] text-on-surface-variant">{b.range}</span>
             </div>
           ))}
         </div>
@@ -352,56 +439,59 @@ export function WeeklySchedule({ nurses, schedule, highlightCell }: WeeklySchedu
               </div>
 
               {/* Timeline */}
-              <TimelineBar shiftKey={shiftKey} highlighted={hlShift} isOff={isOff} />
+              <TimelineBar shiftKey={shiftKey} highlighted={!!hlShift} isOff={!!isOff} />
             </div>
           );
         })}
       </div>
+        </>
+      )}
 
       {/* Tooltip */}
       {tooltip && (
-        <div style={{
-          position: 'fixed', left: tooltip.x + 14, top: tooltip.y - 10, zIndex: 9999,
-          background: 'rgba(6,12,26,0.97)', border: '1px solid rgba(0,212,255,0.2)',
-          borderRadius: '10px', padding: '12px 14px', pointerEvents: 'none',
-          backdropFilter: 'blur(20px)', boxShadow: '0 8px 32px rgba(0,0,0,0.7)', minWidth: '175px',
-        }}>
-          <p style={{ fontSize: '12px', fontWeight: 700, color: '#fff', marginBottom: '6px' }}>
+        <div
+          className="fixed z-[9999] min-w-[175px] rounded-lg border border-outline-variant bg-surface-container-low/95 p-3.5 text-on-surface shadow-xl backdrop-blur-xl"
+          style={{ left: tooltip.x + 14, top: tooltip.y - 10, pointerEvents: 'none' }}
+        >
+          <p className="mb-1.5 text-xs font-semibold text-on-surface">
             {tooltip.nurse.name}
           </p>
-          <div style={{ display: 'flex', gap: '5px', marginBottom: '8px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '3px', background: WARD[tooltip.nurse.ward]?.bg, color: WARD[tooltip.nurse.ward]?.text, fontWeight: 700 }}>
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            <span
+              className="rounded px-1.5 py-0.5 text-[9px] font-semibold"
+              style={{ background: WARD[tooltip.nurse.ward]?.bg, color: WARD[tooltip.nurse.ward]?.text }}
+            >
               {tooltip.nurse.ward}
             </span>
-            <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '3px', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.45)' }}>
+            <span className="rounded bg-surface-container-high px-1.5 py-0.5 text-[9px] text-on-surface-variant">
               Fatigue {tooltip.nurse.fatigue}%
             </span>
           </div>
-          <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.28)', marginBottom: '5px', letterSpacing: '0.5px', textTransform: 'uppercase' }}>This week</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <p className="mb-1 text-[9px] uppercase tracking-[0.05em] text-on-surface-variant">This week</p>
+          <div className="flex flex-col gap-1">
             {SHIFT_BANDS.map(b => {
               const count = tooltip.weekly[b.key as keyof typeof tooltip.weekly] as number;
               return (
-                <div key={b.key} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div key={b.key} className="flex items-center gap-1.5">
                   <div style={{ width: '6px', height: '6px', borderRadius: '1px', background: b.color, border: `1px solid ${b.accent}` }} />
-                  <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.38)', width: '62px' }}>{b.label}</span>
-                  <div style={{ flex: 1, height: '3px', borderRadius: '2px', background: 'rgba(255,255,255,0.06)' }}>
+                  <span className="w-[62px] text-[10px] text-on-surface-variant">{b.label}</span>
+                  <div className="h-[3px] flex-1 rounded bg-surface-container-high">
                     <div style={{ width: `${(count / 7) * 100}%`, height: '100%', borderRadius: '2px', background: b.accent }} />
                   </div>
                   <span style={{ fontSize: '10px', color: b.text, fontWeight: 700, width: '14px', textAlign: 'right' }}>{count}</span>
                 </div>
               );
             })}
-            <div style={{ marginTop: '5px', paddingTop: '5px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)' }}>Total shifts</span>
-              <span style={{ fontSize: '11px', fontWeight: 700, color: tooltip.weekly.total > 5 ? '#FFC107' : '#fff' }}>
+            <div className="mt-1 flex justify-between border-t border-outline-variant pt-1">
+              <span className="text-[10px] text-on-surface-variant">Total shifts</span>
+              <span className={`text-[11px] font-semibold ${tooltip.weekly.total > 5 ? 'text-warning' : 'text-on-surface'}`}>
                 {tooltip.weekly.total}
-                <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.25)', fontWeight: 400 }}> / 5</span>
+                <span className="text-[9px] font-normal text-on-surface-variant"> / 5</span>
               </span>
             </div>
           </div>
           {(tooltip.nurse as any).overtime_status === 'BLOCKED' && (
-            <p style={{ fontSize: '10px', color: '#FF3D5A', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <p className="mt-1.5 flex items-center gap-1 text-[10px] text-error">
               <AlertCircle size={10} /> Overtime blocked
             </p>
           )}

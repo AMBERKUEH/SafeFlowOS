@@ -114,7 +114,7 @@ export const nurses: Nurse[] = [
 
 export interface AgentMessage {
   id: string;
-  type: 'SCHEDULING' | 'FORECAST' | 'COMPLIANCE' | 'EMERGENCY';
+  type: 'SCHEDULING' | 'FORECAST' | 'COMPLIANCE' | 'EMERGENCY' | 'ORCHESTRATOR';
   message: string;
   timestamp: string;
 }

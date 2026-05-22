@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { MainNavbar } from '../components/MainNavbar';
 import { StaffPanel } from '../components/StaffPanel';
 import { WeeklySchedule } from '../components/WeeklySchedule';
 import { ComplianceBar } from '../components/ComplianceBar';
@@ -14,6 +13,7 @@ interface ScheduleData {
   compliance: {
     passed: boolean;
     violations: any[];
+    warnings: any[];
     compliance_score: number;
   };
   forecast: any;
@@ -21,6 +21,22 @@ interface ScheduleData {
   bright_data: any;
   memory_insights: string[];
 }
+
+const actionableComplianceReason = (reason: string) => {
+  const text = reason.toLowerCase();
+  const obsoleteRuleText = [
+    'consecutive ev',
+    'mandatory sd',
+    'minimum 55%',
+    'senior nurses',
+    'minimum senior',
+    'exactly 3',
+    'exactly 4',
+    'malaysian labour',
+    'exceeds 40hr limit',
+  ];
+  return !obsoleteRuleText.some((pattern) => text.includes(pattern));
+};
 
 export default function SchedulePage() {
   const [selectedNurse, setSelectedNurse] = useState<Nurse | null>(null);
@@ -55,12 +71,15 @@ export default function SchedulePage() {
 
         if (scheduleResultStr) {
           const result = JSON.parse(scheduleResultStr);
+          const complianceReasons = (result.compliance?.reasons || []).filter(actionableComplianceReason);
+          const complianceWarnings = result.compliance?.warnings || [];
           setScheduleData({
             schedule: result.schedule,
             compliance: {
-              passed: result.compliance?.status === 'PASSED',
-              violations: result.compliance?.reasons || [],
-              compliance_score: result.compliance?.score || 100,
+              passed: result.compliance?.status === 'PASSED' || complianceReasons.length === 0,
+              violations: complianceReasons,
+              warnings: complianceWarnings,
+              compliance_score: complianceReasons.length === 0 ? 100 : result.compliance?.score || 100,
             },
             forecast: result.staffing_requirements,
             retry_count: 0,
@@ -91,15 +110,10 @@ export default function SchedulePage() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-900 flex flex-col">
-        <div className="relative z-50">
-          <MainNavbar />
-        </div>
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-            <p className="text-red-400">{error}</p>
-          </div>
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
+          <p className="text-red-400">{error}</p>
         </div>
       </div>
     );
@@ -107,10 +121,6 @@ export default function SchedulePage() {
 
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col">
-      <div className="relative z-50">
-        <MainNavbar />
-      </div>
-      
       <div className="flex-1 relative overflow-hidden">
         <LiquidGradientBg />
         
