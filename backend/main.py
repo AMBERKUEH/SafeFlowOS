@@ -1504,7 +1504,8 @@ def handle_emergency(request: EmergencyRequest):
 @app.post("/api/surgeye/baseline-scan")
 async def surgeye_baseline_scan(
     surgery_id: str = Form(default="S001"),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    source: str = Form(default="upload")
 ):
     if not surgeye_agent:
         raise HTTPException(status_code=503, detail="SurgEye Agent not available")
@@ -1514,7 +1515,7 @@ async def surgeye_baseline_scan(
         shutil.copyfileobj(file.file, f)
 
     try:
-        result = surgeye_agent.baseline_scan(surgery_id, tmp_path)
+        result = surgeye_agent.baseline_scan(surgery_id, tmp_path, source)  # ← add source
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
@@ -1525,7 +1526,8 @@ async def surgeye_baseline_scan(
 async def surgeye_postop_scan(
     surgery_id: str = Form(default="S001"),
     baseline_items: str = Form(...),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    source: str = Form(default="upload")
 ):
     if not surgeye_agent:
         raise HTTPException(status_code=503, detail="SurgEye Agent not available")
@@ -1537,8 +1539,7 @@ async def surgeye_postop_scan(
         shutil.copyfileobj(file.file, f)
 
     try:
-        postop = surgeye_agent.postop_scan(surgery_id, items, tmp_path)
-        # Safety Validator Agent runs automatically after post-op scan
+        postop = surgeye_agent.postop_scan(surgery_id, items, tmp_path, source)  # ← add source
         validation = surgeye_agent.validate_safety(
             surgery_id,
             items,
@@ -1548,7 +1549,6 @@ async def surgeye_postop_scan(
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-    # merge postop + validation into one response
     return {**postop, **validation}
 
 @app.get("/api/surgeye/alerts")
