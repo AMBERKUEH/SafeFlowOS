@@ -24,27 +24,28 @@ export async function fetchNurses(): Promise<{ nurses: any[]; source: string } |
 }
 
 // POST /api/ocr - Upload PDF and extract nurses
-export async function uploadPDF(file: File): Promise<{ nurses: any[]; raw_text: string; nurses_found: number } | null> {
+export async function uploadPDF(file: File): Promise<{ nurses: any[]; raw_text: string; nurses_found: number; document?: any; storage_status?: string }> {
   const formData = new FormData();
   formData.append("file", file);
 
-  try {
-    const response = await fetch(`${API_BASE}/api/ocr`, {
-      method: "POST",
-      body: formData,
-    });
+  const response = await fetch(`${API_BASE}/api/ocr`, {
+    method: "POST",
+    body: formData,
+  });
 
-    if (!response.ok) {
+  if (!response.ok) {
+    let detail = "PDF may be unreadable";
+    try {
       const error = await response.json();
-      showError(`OCR failed: ${error.detail || 'PDF may be unreadable'}`);
-      return null;
+      detail = error.detail || detail;
+    } catch {
+      // Keep fallback detail for non-JSON responses
     }
-
-    return await response.json();
-  } catch (err) {
-    showError("Network error during OCR — check backend is running");
-    return null;
+    showError(`OCR failed: ${detail}`);
+    throw new Error(detail);
   }
+
+  return await response.json();
 }
 
 // POST /api/generate-schedule - Generate schedule with all agents
@@ -57,6 +58,7 @@ export async function generateSchedule(
   compliance: { 
     status: string; 
     reasons: string[]; 
+    warnings?: string[];
     score: number;
     weekly_hours: Record<string, number>;
     overtime_risk: Array<{nurse: string; hours: number; status: string}>;
@@ -159,6 +161,7 @@ export async function runComplianceAgent(
   compliance: {
     status: string;
     reasons: string[];
+    warnings?: string[];
     score: number;
   };
 } | null> {
@@ -192,6 +195,7 @@ export async function handleEmergency(
   updated_schedule: any;
   severity: string;
   action_taken: string;
+  overflow?: any;
 } | null> {
   try {
     const body: any = { disruption };
@@ -212,6 +216,108 @@ export async function handleEmergency(
     return await response.json();
   } catch (err) {
     showError("Network error during emergency handling — check backend is running");
+    return null;
+  }
+}
+
+// POST /api/orchestrator/overflow - Patient surge workflow
+export async function handleOverflow(
+  nurses: any[],
+  currentSchedule?: any,
+  incomingPatients?: any[],
+  department = "ER",
+  currentDay?: string,
+  currentShift?: string
+): Promise<any | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/orchestrator/overflow`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nurses,
+        current_schedule: currentSchedule,
+        incoming_patients: incomingPatients,
+        department,
+        current_day: currentDay,
+        current_shift: currentShift,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showError(`Orchestrator overflow failed — ${error.detail || 'Unknown error'}`);
+      return null;
+    }
+
+    return await response.json();
+  } catch (err) {
+    showError("Network error during overflow orchestration — check backend is running");
+    return null;
+  }
+}
+
+// POST /api/emergency-leave - Structured emergency leave workflow
+export async function handleEmergencyLeave(params: {
+  nurseName: string;
+  department: string;
+  day: string;
+  shift: string;
+  nurses: any[];
+  currentSchedule: any;
+}): Promise<any | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/emergency-leave`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nurse_name: params.nurseName,
+        department: params.department,
+        day: params.day,
+        shift: params.shift,
+        nurses: params.nurses,
+        current_schedule: params.currentSchedule,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showError(`Emergency leave failed — ${error.detail || 'Unknown error'}`);
+      return null;
+    }
+
+    return await response.json();
+  } catch (err) {
+    showError("Network error during emergency leave handling — check backend is running");
+    return null;
+  }
+}
+
+// POST /api/approval-status - Persist head nurse approval decision
+export async function updateApprovalStatus(params: {
+  approvalType: "overflow" | "emergency_leave";
+  approvalId: string;
+  status: "approved" | "declined";
+}): Promise<any | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/approval-status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approval_type: params.approvalType,
+        approval_id: params.approvalId,
+        status: params.status,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showError(`Approval update failed â€” ${error.detail || 'Unknown error'}`);
+      return null;
+    }
+
+    return await response.json();
+  } catch (err) {
+    showError("Network error during approval update â€” check backend is running");
     return null;
   }
 }

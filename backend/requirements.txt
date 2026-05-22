@@ -4,7 +4,7 @@ python-dotenv
 python-multipart
 requests
 pillow
-groq
+groq>=1.2.0
 acontext
 pdf2image
 faker

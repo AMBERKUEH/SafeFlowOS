@@ -15,6 +15,9 @@ import json
 import tempfile
 import shutil
 import re
+import uuid
+from datetime import datetime
+from urllib.parse import quote
 
 # Add agents directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "agents"))
@@ -32,6 +35,7 @@ from agent1_scheduler import SchedulingAgent
 from agent2_forecast import ForecastAgent
 from agent3_compliance import ComplianceAgent
 from agent4_emergency import EmergencyAgent
+from agent_orchestrator import SafeFlowOrchestrator
 from agent_brightdata import BrightDataAgent
 from agent_memory import MemoryAgent
 
@@ -93,6 +97,13 @@ except Exception as e:
     emergency_agent = None
 
 try:
+    orchestrator_agent = SafeFlowOrchestrator()
+    print("✓ SafeFlowOrchestrator initialized")
+except Exception as e:
+    print(f"✗ SafeFlowOrchestrator failed: {e}")
+    orchestrator_agent = None
+
+try:
     brightdata_agent = BrightDataAgent()
     print("✓ BrightDataAgent initialized")
 except Exception as e:
@@ -121,6 +132,445 @@ print("=" * 70 + "\n")
 NURSES_JSON_PATH = os.path.join(os.path.dirname(__file__), "nurses.json")
 
 
+def sanitize_storage_filename(filename: str) -> str:
+    """Make uploaded filenames safe for object storage paths."""
+    base = os.path.basename(filename or "upload.pdf")
+    base = re.sub(r"[^A-Za-z0-9._-]+", "_", base).strip("._")
+    return base or "upload.pdf"
+
+
+def supabase_configured() -> bool:
+    return bool(os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
+
+
+def supabase_headers(prefer: str = "return=representation") -> Optional[Dict[str, str]]:
+    if not supabase_configured():
+        return None
+    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    return headers
+
+
+def supabase_rest_url(table: str, query: str = "") -> str:
+    base = os.environ["SUPABASE_URL"].rstrip("/")
+    suffix = f"?{query}" if query else ""
+    return f"{base}/rest/v1/{table}{suffix}"
+
+
+def normalize_department(ward: Optional[str]) -> str:
+    value = (ward or "General").strip()
+    aliases = {
+        "Emergency": "ER",
+        "Operating Room": "Surgery",
+        "OR": "Surgery",
+    }
+    value = aliases.get(value, value)
+    return value if value in ["ER", "ICU", "General", "Pediatrics", "Surgery"] else "General"
+
+
+def normalize_skill(skill: Optional[str]) -> str:
+    value = (skill or "N1").strip().upper()
+    return value if value in ["N1", "N2", "N3", "N4"] else "N1"
+
+
+def supabase_post(table: str, payload: Any) -> Optional[Any]:
+    if not supabase_configured():
+        return None
+    try:
+        import requests
+
+        response = requests.post(
+            supabase_rest_url(table),
+            headers=supabase_headers(),
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"  ⚠ Supabase insert failed for {table}: {e}")
+        return None
+
+
+def supabase_get(table: str, query: str) -> Optional[Any]:
+    if not supabase_configured():
+        return None
+    try:
+        import requests
+
+        response = requests.get(
+            supabase_rest_url(table, query),
+            headers=supabase_headers(prefer=""),
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"  ⚠ Supabase select failed for {table}: {e}")
+        return None
+
+
+def supabase_patch(table: str, query: str, payload: Dict[str, Any]) -> Optional[Any]:
+    if not supabase_configured():
+        return None
+    try:
+        import requests
+
+        response = requests.patch(
+            supabase_rest_url(table, query),
+            headers=supabase_headers(),
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"  ⚠ Supabase update failed for {table}: {e}")
+        return None
+
+
+def persist_nurses_to_supabase(
+    nurses: List[Dict[str, Any]],
+    source_document_id: Optional[str] = None,
+) -> Dict[str, str]:
+    """Insert extracted nurses and return name -> Supabase nurse id."""
+    if not nurses or not supabase_configured():
+        return {}
+
+    rows = []
+    for nurse in nurses:
+        name = nurse.get("name")
+        if not name:
+            continue
+        rows.append({
+            "name": name,
+            "skill_level": normalize_skill(nurse.get("skill") or nurse.get("skill_level")),
+            "ward": normalize_department(nurse.get("ward")),
+            "unavailable_days": nurse.get("unavailable_days", []),
+            "fatigue_score": int(nurse.get("fatigue_score", nurse.get("fatigue", 0)) or 0),
+            "source_document_id": source_document_id,
+            "metadata": {"source": "ocr_upload" if source_document_id else "schedule_request"},
+        })
+
+    inserted = supabase_post("nurses", rows)
+    if not inserted:
+        return {}
+
+    id_by_name = {row["name"]: row["id"] for row in inserted if row.get("name") and row.get("id")}
+    for nurse in nurses:
+        if nurse.get("name") in id_by_name:
+            nurse["supabase_id"] = id_by_name[nurse["name"]]
+    print(f"  ✓ Persisted {len(id_by_name)} nurses to Supabase")
+    return id_by_name
+
+
+def ensure_nurse_ids(nurses: List[Dict[str, Any]]) -> Dict[str, str]:
+    existing = {n["name"]: n["supabase_id"] for n in nurses if n.get("name") and n.get("supabase_id")}
+    missing = [n for n in nurses if n.get("name") and not n.get("supabase_id")]
+    if missing:
+        existing.update(persist_nurses_to_supabase(missing))
+    return existing
+
+
+def persist_schedule_to_supabase(
+    schedule: Dict[str, Dict[str, List[str]]],
+    nurses: List[Dict[str, Any]],
+    staffing_requirements: Optional[Dict[str, Any]] = None,
+    compliance: Optional[Dict[str, Any]] = None,
+    source_document_id: Optional[str] = None,
+) -> Optional[str]:
+    if not schedule or not supabase_configured():
+        return None
+
+    nurse_ids = ensure_nurse_ids(nurses)
+    compliance = compliance or {}
+    schedule_rows = supabase_post("nurse_schedules", {
+        "source_document_id": source_document_id,
+        "version": 1,
+        "status": "active",
+        "staffing_requirements": staffing_requirements or {},
+        "compliance_status": compliance.get("status", "UNKNOWN"),
+        "compliance_score": int(compliance.get("score", 0) or 0),
+        "compliance_reasons": compliance.get("reasons", []),
+        "compliance_warnings": compliance.get("warnings", []),
+        "generated_by_agent": "SafeFlow OS Orchestrator",
+    })
+    if not schedule_rows:
+        return None
+
+    schedule_id = schedule_rows[0]["id"]
+    nurse_by_name = {n.get("name"): n for n in nurses}
+    assignments = []
+    for day, shifts in schedule.items():
+        for shift, nurse_names in shifts.items():
+            for nurse_name in nurse_names:
+                nurse_id = nurse_ids.get(nurse_name)
+                if not nurse_id:
+                    continue
+                nurse_data = nurse_by_name.get(nurse_name, {})
+                assignments.append({
+                    "schedule_id": schedule_id,
+                    "nurse_id": nurse_id,
+                    "shift_day": day,
+                    "shift_type": shift,
+                    "department": normalize_department(nurse_data.get("ward")),
+                    "assignment_status": "assigned",
+                })
+
+    if assignments:
+        supabase_post("schedule_assignments", assignments)
+
+    print(f"  ✓ Persisted schedule {schedule_id} with {len(assignments)} assignments")
+    return schedule_id
+
+
+def find_latest_schedule_id() -> Optional[str]:
+    rows = supabase_get("nurse_schedules", "select=id&order=created_at.desc&limit=1")
+    if rows:
+        return rows[0].get("id")
+    return None
+
+
+def persist_overflow_to_supabase(result: Dict[str, Any], nurses: List[Dict[str, Any]]) -> Optional[str]:
+    if not result or not supabase_configured():
+        return None
+
+    schedule_id = find_latest_schedule_id()
+    event_rows = supabase_post("overflow_events", {
+        "schedule_id": schedule_id,
+        "department": normalize_department(result.get("department")),
+        "current_day": result.get("current_day"),
+        "current_shift": result.get("current_shift"),
+        "incoming_patients": int(result.get("incoming_patients", 0) or 0),
+        "high_risk_patients": int(result.get("high_risk_patients", 0) or 0),
+        "load_level": result.get("load_level", "NORMAL"),
+        "risk_queue_status": result.get("risk_queue_status", "STABLE"),
+        "department_staffing": result.get("department_staffing", {}),
+        "orchestrator_decision": result.get("orchestrator_decision", ""),
+        "head_nurse_approval_required": bool(result.get("head_nurse_approval_required", True)),
+        "approval_status": "pending" if result.get("head_nurse_approval_required", True) else "not_required",
+    })
+    if not event_rows:
+        return None
+
+    event_id = event_rows[0]["id"]
+    nurse_ids = ensure_nurse_ids(nurses)
+    transfers = []
+    for transfer in result.get("transfers", []):
+        nurse_id = nurse_ids.get(transfer.get("nurse"))
+        if not nurse_id:
+            continue
+        transfers.append({
+            "overflow_event_id": event_id,
+            "nurse_id": nurse_id,
+            "from_department": normalize_department(transfer.get("from")),
+            "to_department": normalize_department(transfer.get("to")),
+            "transfer_status": transfer.get("status", "pending_head_nurse_approval"),
+            "reason": "Orchestrator overflow recommendation",
+            "notification_status": "not_sent",
+        })
+
+    if transfers:
+        supabase_post("overflow_transfers", transfers)
+
+    print(f"  ✓ Persisted overflow event {event_id} with {len(transfers)} transfer recommendations")
+    return event_id
+
+
+def persist_emergency_leave_to_supabase(
+    emergency_event: Dict[str, Any],
+    nurses: List[Dict[str, Any]],
+) -> Optional[str]:
+    if not emergency_event or not supabase_configured():
+        return None
+
+    nurse_ids = ensure_nurse_ids(nurses)
+    leave_nurse_id = nurse_ids.get(emergency_event.get("leave_nurse"))
+    if not leave_nurse_id:
+        return None
+
+    rows = supabase_post("emergency_leave_requests", {
+        "schedule_id": find_latest_schedule_id(),
+        "nurse_id": leave_nurse_id,
+        "replacement_nurse_id": nurse_ids.get(emergency_event.get("replacement_nurse")),
+        "department": normalize_department(emergency_event.get("department")),
+        "shift_day": emergency_event.get("day"),
+        "shift_type": emergency_event.get("shift"),
+        "reason": "Emergency leave",
+        "status": "schedule_regenerated" if emergency_event.get("replacement_nurse") else "pending",
+        "head_nurse_approval_status": "pending",
+        "action_taken": emergency_event.get("action_taken"),
+        "repair_notes": emergency_event.get("repair_notes", []),
+    })
+    if rows:
+        print(f"  ✓ Persisted emergency leave request {rows[0]['id']}")
+        return rows[0]["id"]
+    return None
+
+
+def update_approval_status_in_supabase(
+    approval_type: str,
+    approval_id: str,
+    status: str,
+) -> Dict[str, Any]:
+    if not supabase_configured():
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+    normalized_type = approval_type.strip().lower()
+    normalized_status = status.strip().lower()
+    db_status = {"approved": "approved", "declined": "rejected", "rejected": "rejected"}.get(normalized_status)
+    if not db_status:
+        raise HTTPException(status_code=400, detail="Approval status must be approved or declined")
+
+    safe_id = quote(approval_id, safe="")
+
+    if normalized_type == "overflow":
+        event_rows = supabase_patch(
+            "overflow_events",
+            f"id=eq.{safe_id}",
+            {"approval_status": db_status},
+        )
+        transfer_rows = supabase_patch(
+            "overflow_transfers",
+            f"overflow_event_id=eq.{safe_id}",
+            {"transfer_status": db_status},
+        )
+        if event_rows is None or transfer_rows is None:
+            raise HTTPException(status_code=502, detail="Failed to update overflow approval status")
+
+        return {
+            "approval_type": normalized_type,
+            "approval_id": approval_id,
+            "approval_status": db_status,
+            "overflow_event_rows": len(event_rows),
+            "overflow_transfer_rows": len(transfer_rows),
+        }
+
+    if normalized_type == "emergency_leave":
+        leave_rows = supabase_patch(
+            "emergency_leave_requests",
+            f"id=eq.{safe_id}",
+            {"head_nurse_approval_status": db_status},
+        )
+        if leave_rows is None:
+            raise HTTPException(status_code=502, detail="Failed to update emergency leave approval status")
+
+        return {
+            "approval_type": normalized_type,
+            "approval_id": approval_id,
+            "head_nurse_approval_status": db_status,
+            "emergency_leave_rows": len(leave_rows),
+        }
+
+    raise HTTPException(status_code=400, detail="Approval type must be overflow or emergency_leave")
+
+
+def upload_document_to_supabase(file: UploadFile, content: bytes) -> Optional[Dict[str, Any]]:
+    """
+    Store the uploaded PDF in Supabase Storage and insert metadata.
+
+    This uses Supabase's Storage REST API instead of an S3 client, so it only
+    needs SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and SUPABASE_STORAGE_BUCKET.
+    """
+    if not supabase_configured():
+        print("  ⚠ Supabase not configured; skipping document storage")
+        return None
+
+    try:
+        import requests
+    except ImportError:
+        print("  ⚠ requests not installed; skipping document storage")
+        return None
+
+    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
+    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    bucket = os.environ.get("SUPABASE_STORAGE_BUCKET", "schedule-documents")
+    safe_name = sanitize_storage_filename(file.filename or "upload.pdf")
+    storage_path = f"uploads/{datetime.utcnow().strftime('%Y/%m/%d')}/{uuid.uuid4()}-{safe_name}"
+
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+    }
+
+    upload_headers = {
+        **headers,
+        "Content-Type": file.content_type or "application/pdf",
+        "x-upsert": "false",
+    }
+
+    object_url = f"{supabase_url}/storage/v1/object/{bucket}/{storage_path}"
+    upload_response = requests.post(object_url, headers=upload_headers, data=content, timeout=30)
+    upload_response.raise_for_status()
+
+    metadata = {
+        "original_filename": file.filename or safe_name,
+        "storage_bucket": bucket,
+        "storage_path": storage_path,
+        "mime_type": file.content_type or "application/pdf",
+        "file_size_bytes": len(content),
+        "upload_status": "uploaded",
+    }
+
+    db_headers = {
+        **headers,
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    db_response = requests.post(
+        f"{supabase_url}/rest/v1/uploaded_documents",
+        headers=db_headers,
+        json=metadata,
+        timeout=30,
+    )
+    db_response.raise_for_status()
+    rows = db_response.json()
+    document = rows[0] if rows else metadata
+    print(f"  ✓ Uploaded document to Supabase Storage: {storage_path}")
+    return document
+
+
+def mark_supabase_document_processed(
+    document_id: Optional[str],
+    nurses_found: int,
+    extracted_text: str,
+) -> None:
+    """Update document metadata after OCR completes."""
+    if not document_id or not supabase_configured():
+        return
+
+    try:
+        import requests
+
+        supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
+        service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "upload_status": "processed",
+            "extracted_text": extracted_text,
+            "extraction_summary": {"nurses_found": nurses_found},
+        }
+        response = requests.patch(
+            f"{supabase_url}/rest/v1/uploaded_documents?id=eq.{document_id}",
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+    except Exception as e:
+        print(f"  ⚠ Failed to update Supabase document metadata: {e}")
+
+
 def load_fallback_nurses() -> List[Dict[str, Any]]:
     """Load nurses from JSON file as fallback."""
     try:
@@ -142,6 +592,30 @@ class EmergencyRequest(BaseModel):
     current_schedule: Optional[Dict[str, Any]] = None
 
 
+class OverflowRequest(BaseModel):
+    nurses: Optional[List[Dict[str, Any]]] = None
+    current_schedule: Optional[Dict[str, Any]] = None
+    incoming_patients: Optional[List[Dict[str, Any]]] = None
+    department: str = "ER"
+    current_day: Optional[str] = None
+    current_shift: Optional[str] = None
+
+
+class EmergencyLeaveRequest(BaseModel):
+    nurse_name: str
+    department: str
+    day: str
+    shift: str
+    nurses: Optional[List[Dict[str, Any]]] = None
+    current_schedule: Dict[str, Any]
+
+
+class ApprovalStatusRequest(BaseModel):
+    approval_type: str
+    approval_id: str
+    status: str
+
+
 # Health check endpoint
 @app.get("/api/health")
 def health_check():
@@ -154,6 +628,7 @@ def health_check():
             "forecast": forecast_agent is not None,
             "compliance": compliance_agent is not None,
             "emergency": emergency_agent is not None,
+            "orchestrator": orchestrator_agent is not None,
             "brightdata": brightdata_agent is not None,
             "memory": memory_agent is not None
         }
@@ -213,13 +688,16 @@ async def ocr_extract(file: UploadFile = File(...)):
     # Check OCRAgent availability
     if not ocr_agent:
         print("  ✗ OCRAgent not available")
-        raise HTTPException(status_code=503, detail="OCR Agent not available - check Gemini API key")
+        raise HTTPException(status_code=503, detail="OCR Agent not available - check GROQ_API_KEY")
     
     # Save uploaded file temporarily
     tmp_path = None
+    stored_document = None
     try:
+        content = await file.read()
+        stored_document = upload_document_to_supabase(file, content)
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            content = await file.read()
             tmp.write(content)
             tmp_path = tmp.name
         
@@ -230,11 +708,24 @@ async def ocr_extract(file: UploadFile = File(...)):
         nurses = ocr_agent.extract(tmp_path)
         
         print(f"  ✓ OCRAgent extracted {len(nurses)} nurses")
-        
+        nurse_ids = persist_nurses_to_supabase(
+            nurses,
+            source_document_id=stored_document.get("id") if stored_document else None,
+        )
+        extracted_text = f"Extracted {len(nurses)} nurses from PDF"
+        mark_supabase_document_processed(
+            document_id=stored_document.get("id") if stored_document else None,
+            nurses_found=len(nurses),
+            extracted_text=extracted_text,
+        )
+
         return {
             "nurses": nurses,
-            "raw_text": f"Extracted {len(nurses)} nurses from PDF",
-            "nurses_found": len(nurses)
+            "raw_text": extracted_text,
+            "nurses_found": len(nurses),
+            "document": stored_document,
+            "nurse_ids": nurse_ids,
+            "storage_status": "stored" if stored_document else "not_configured"
         }
         
     except Exception as e:
@@ -338,6 +829,7 @@ def generate_schedule(request: GenerateScheduleRequest):
             result["compliance"] = {
                 "status": "PASSED" if compliance_result.get("passed") else "FAILED",
                 "reasons": compliance_result.get("violations", []),
+                "warnings": compliance_result.get("warnings", []),
                 "score": compliance_result.get("compliance_score", 0)
             }
         except Exception as e:
@@ -391,6 +883,15 @@ def generate_schedule(request: GenerateScheduleRequest):
         result["alerts"] = ["Emergency Agent not available"]
     
     print("\n  ✅ ORCHESTRATOR COMPLETE — returning results")
+    schedule_id = persist_schedule_to_supabase(
+        schedule=result["schedule"],
+        nurses=nurses,
+        staffing_requirements=result["staffing_requirements"],
+        compliance=result["compliance"],
+    )
+    if schedule_id:
+        result["schedule_id"] = schedule_id
+
     return result
 
 
@@ -492,14 +993,24 @@ def agent_compliance(request: ComplianceRequest):
         compliance_result = compliance_agent.check(request.schedule, request.nurses)
         print(f"  ✓ Compliance: {'PASSED' if compliance_result.get('passed') else 'FAILED'}")
         
+        compliance_payload = {
+            "status": "PASSED" if compliance_result.get("passed") else "FAILED",
+            "reasons": compliance_result.get("violations", []),
+            "warnings": compliance_result.get("warnings", []),
+            "score": compliance_result.get("compliance_score", 0)
+        }
+        schedule_id = persist_schedule_to_supabase(
+            schedule=request.schedule,
+            nurses=request.nurses,
+            staffing_requirements={},
+            compliance=compliance_payload,
+        )
+
         return {
             "step": "compliance",
             "status": "complete",
-            "compliance": {
-                "status": "PASSED" if compliance_result.get("passed") else "FAILED",
-                "reasons": compliance_result.get("violations", []),
-                "score": compliance_result.get("compliance_score", 0)
-            }
+            "compliance": compliance_payload,
+            "schedule_id": schedule_id
         }
     except Exception as e:
         print(f"  ✗ ComplianceAgent failed: {e}")
@@ -515,6 +1026,369 @@ def agent_compliance(request: ComplianceRequest):
 
 
 # POST /api/emergency - Handle emergency disruption
+def find_emergency_leave_replacement(
+    nurse_name: str,
+    department: str,
+    day: str,
+    shift: str,
+    schedule: Dict[str, Any],
+    nurses: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Find a replacement nurse for a structured emergency leave request."""
+    nurse_by_name = {n.get("name"): n for n in nurses}
+    scheduled_today = set()
+    for shift_names in schedule.get(day, {}).values():
+        scheduled_today.update(shift_names)
+
+    assigned_shift = set(schedule.get(day, {}).get(shift, []))
+    required_rank = 3 if department in ["ER", "ICU", "Surgery", "Operating Room"] else 2
+
+    candidates = []
+    for nurse in nurses:
+        name = nurse.get("name")
+        if not name or name == nurse_name:
+            continue
+        if name in assigned_shift:
+            continue
+        if day in nurse.get("unavailable_days", []):
+            continue
+        if shift == "night" and nurse_night_count(schedule, name) >= 3:
+            continue
+        if not respects_rest_window(schedule, day, shift, name):
+            continue
+
+        skill = nurse.get("skill", "N1")
+        rank = {"N1": 1, "N2": 2, "N3": 3, "N4": 4}.get(skill, 1)
+        if rank < required_rank:
+            continue
+
+        fatigue = int(nurse.get("fatigue_score", nurse.get("fatigue", 40)) or 40)
+        if fatigue >= 90:
+            continue
+
+        is_free_today = name not in scheduled_today
+        same_department = nurse.get("ward") == department
+        score = (rank * 10) + (15 if is_free_today else 3) + (10 if same_department else 0) + max(0, 20 - fatigue // 5)
+        candidates.append({**nurse, "score": score, "is_free_today": is_free_today})
+
+    candidates.sort(key=lambda item: item["score"], reverse=True)
+    return candidates[0] if candidates else None
+
+
+def count_nurse_shifts(schedule: Dict[str, Any], nurse_name: str) -> int:
+    return sum(
+        1
+        for day_schedule in schedule.values()
+        for assigned_nurses in day_schedule.values()
+        if nurse_name in assigned_nurses
+    )
+
+
+def nurse_shift_on_day(schedule: Dict[str, Any], day: str, nurse_name: str) -> Optional[str]:
+    for shift_name, assigned_nurses in schedule.get(day, {}).items():
+        if nurse_name in assigned_nurses:
+            return shift_name
+    return None
+
+
+def respects_rest_window(schedule: Dict[str, Any], day: str, shift: str, nurse_name: str) -> bool:
+    days = list(schedule.keys())
+    day_index = days.index(day) if day in days else -1
+    if shift == "morning" and day_index > 0:
+        previous_day = days[day_index - 1]
+        if nurse_name in schedule.get(previous_day, {}).get("night", []):
+            return False
+    if shift == "night" and 0 <= day_index < len(days) - 1:
+        next_day = days[day_index + 1]
+        if nurse_name in schedule.get(next_day, {}).get("morning", []):
+            return False
+
+    return True
+
+
+def nurse_night_count(schedule: Dict[str, Any], nurse_name: str) -> int:
+    return sum(
+        1
+        for day_schedule in schedule.values()
+        if nurse_name in day_schedule.get("night", [])
+    )
+
+
+def can_cover_shift(schedule: Dict[str, Any], day: str, shift: str, nurse: Dict[str, Any]) -> bool:
+    name = nurse.get("name")
+    if not name:
+        return False
+    if nurse_shift_on_day(schedule, day, name):
+        return False
+    if day in nurse.get("unavailable_days", []):
+        return False
+    if shift == "night" and nurse_night_count(schedule, name) >= 3:
+        return False
+    if not respects_rest_window(schedule, day, shift, name):
+        return False
+
+    return True
+
+
+def can_move_to_cover_shift(
+    schedule: Dict[str, Any],
+    day: str,
+    from_shift: str,
+    to_shift: str,
+    nurse: Dict[str, Any],
+) -> bool:
+    name = nurse.get("name")
+    if not name or from_shift == to_shift:
+        return False
+    if name not in schedule.get(day, {}).get(from_shift, []):
+        return False
+    if len(schedule.get(day, {}).get(from_shift, [])) <= 3:
+        return False
+    if day in nurse.get("unavailable_days", []):
+        return False
+    if to_shift == "night" and nurse_night_count(schedule, name) >= 3:
+        return False
+    if not respects_rest_window(schedule, day, to_shift, name):
+        return False
+
+    return True
+
+
+def repair_minimum_staffing(schedule: Dict[str, Any], nurses: List[Dict[str, Any]]) -> List[str]:
+    """Backfill understaffed shifts after an emergency leave change."""
+    repair_notes = []
+    nurse_by_name = {n.get("name"): n for n in nurses if n.get("name")}
+    for day, day_schedule in schedule.items():
+        for shift, assigned_nurses in day_schedule.items():
+            while len(assigned_nurses) < 3:
+                candidates = []
+                for nurse in nurses:
+                    if not can_cover_shift(schedule, day, shift, nurse):
+                        continue
+                    fatigue = int(nurse.get("fatigue_score", nurse.get("fatigue", 40)) or 40)
+                    shift_count = count_nurse_shifts(schedule, nurse.get("name"))
+                    skill_rank = {"N1": 1, "N2": 2, "N3": 3, "N4": 4}.get(nurse.get("skill", "N1"), 1)
+                    score = (skill_rank * 10) - (shift_count * 4) - (fatigue // 10)
+                    candidates.append((score, nurse))
+
+                if not candidates:
+                    move_candidates = []
+                    for from_shift, source_nurses in day_schedule.items():
+                        if from_shift == shift or len(source_nurses) <= 3:
+                            continue
+                        for nurse_name in source_nurses:
+                            nurse = nurse_by_name.get(nurse_name)
+                            if not nurse or not can_move_to_cover_shift(schedule, day, from_shift, shift, nurse):
+                                continue
+                            fatigue = int(nurse.get("fatigue_score", nurse.get("fatigue", 40)) or 40)
+                            shift_count = count_nurse_shifts(schedule, nurse_name)
+                            skill_rank = {"N1": 1, "N2": 2, "N3": 3, "N4": 4}.get(nurse.get("skill", "N1"), 1)
+                            source_surplus = len(source_nurses) - 3
+                            score = (source_surplus * 20) + (skill_rank * 10) - (shift_count * 4) - (fatigue // 10)
+                            move_candidates.append((score, from_shift, nurse))
+
+                    if not move_candidates:
+                        repair_notes.append(f"{day} {shift} still needs manual review - no safe backfill found")
+                        break
+
+                    move_candidates.sort(key=lambda item: item[0], reverse=True)
+                    _, from_shift, selected = move_candidates[0]
+                    day_schedule[from_shift].remove(selected["name"])
+                    assigned_nurses.append(selected["name"])
+                    repair_notes.append(
+                        f"Moved {selected['name']} from {day} {from_shift} to {day} {shift} to maintain minimum coverage"
+                    )
+                    continue
+
+                candidates.sort(key=lambda item: item[0], reverse=True)
+                selected = candidates[0][1]
+                assigned_nurses.append(selected["name"])
+                repair_notes.append(f"Backfilled {selected['name']} into {day} {shift} to maintain minimum coverage")
+
+    return repair_notes
+
+
+@app.post("/api/emergency-leave")
+def handle_emergency_leave(request: EmergencyLeaveRequest):
+    """
+    Structured emergency leave workflow.
+
+    The frontend supplies nurse, department, day, and shift explicitly, so the
+    system never guesses or creates a None-based disruption.
+    """
+    print("\n🚨 [API] POST /api/emergency-leave called")
+    print(f"  → {request.nurse_name}, {request.department}, {request.day}, {request.shift}")
+
+    nurses = request.nurses or load_fallback_nurses()
+    schedule = json.loads(json.dumps(request.current_schedule))
+
+    if request.day not in schedule or request.shift not in schedule[request.day]:
+        raise HTTPException(status_code=400, detail="Selected day or shift does not exist in the current schedule")
+
+    shift_nurses = schedule[request.day][request.shift]
+    if request.nurse_name not in shift_nurses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{request.nurse_name} is not assigned to {request.day} {request.shift}",
+        )
+
+    replacement = find_emergency_leave_replacement(
+        nurse_name=request.nurse_name,
+        department=request.department,
+        day=request.day,
+        shift=request.shift,
+        schedule=schedule,
+        nurses=nurses,
+    )
+
+    shift_nurses.remove(request.nurse_name)
+    if replacement:
+        if not replacement.get("is_free_today"):
+            for shift_name, assigned_nurses in schedule[request.day].items():
+                if shift_name != request.shift and replacement["name"] in assigned_nurses:
+                    assigned_nurses.remove(replacement["name"])
+                    break
+        shift_nurses.append(replacement["name"])
+        action_taken = (
+            f"{request.nurse_name} emergency leave approved for {request.day} {request.shift}. "
+            f"{replacement['name']} ({replacement.get('skill', 'N/A')}) reassigned to {request.department}."
+        )
+        transfer = {
+            "nurse": replacement["name"],
+            "from": replacement.get("ward", "Unknown"),
+            "to": request.department,
+            "day": request.day,
+            "shift": request.shift,
+            "status": "schedule_regenerated",
+        }
+    else:
+        action_taken = (
+            f"{request.nurse_name} removed from {request.day} {request.shift}, "
+            "but no safe replacement was found. Head nurse review required."
+        )
+        transfer = None
+
+    repair_notes = repair_minimum_staffing(schedule, nurses)
+    compliance_result = compliance_agent.check(schedule, nurses) if compliance_agent else {
+        "passed": False,
+        "violations": ["Compliance Agent not available"],
+        "warnings": [],
+        "compliance_score": 0,
+        "weekly_hours": {},
+        "overtime_risk": [],
+    }
+
+    emergency_event = {
+        "type": "emergency_leave",
+        "leave_nurse": request.nurse_name,
+        "department": request.department,
+        "day": request.day,
+        "shift": request.shift,
+        "replacement_nurse": replacement["name"] if replacement else None,
+        "replacement_from": replacement.get("ward") if replacement else None,
+        "action_taken": action_taken,
+        "repair_notes": repair_notes,
+    }
+
+    compliance_payload = {
+        "status": "PASSED" if compliance_result.get("passed") else "FAILED",
+        "reasons": compliance_result.get("violations", []),
+        "warnings": compliance_result.get("warnings", []),
+        "score": compliance_result.get("compliance_score", 0),
+        "weekly_hours": compliance_result.get("weekly_hours", {}),
+        "overtime_risk": compliance_result.get("overtime_risk", []),
+    }
+    schedule_id = persist_schedule_to_supabase(
+        schedule=schedule,
+        nurses=nurses,
+        staffing_requirements={},
+        compliance=compliance_payload,
+    )
+    emergency_leave_id = persist_emergency_leave_to_supabase(emergency_event, nurses)
+
+    return {
+        "updated_schedule": schedule,
+        "severity": "HIGH" if request.department in ["ER", "ICU", "Surgery"] else "MEDIUM",
+        "action_taken": action_taken,
+        "replacement": replacement["name"] if replacement else None,
+        "transfer": transfer,
+        "repair_notes": repair_notes,
+        "compliance": compliance_payload,
+        "emergency_event": emergency_event,
+        "schedule_id": schedule_id,
+        "emergency_leave_id": emergency_leave_id,
+        "alerts": [action_taken] + repair_notes,
+    }
+
+
+@app.post("/api/approval-status")
+def update_approval_status(request: ApprovalStatusRequest):
+    """Persist head nurse approval decisions for overflow and emergency leave."""
+    print("\n✅ [API] POST /api/approval-status called")
+    print(f"  → {request.approval_type} {request.approval_id}: {request.status}")
+    return update_approval_status_in_supabase(
+        approval_type=request.approval_type,
+        approval_id=request.approval_id,
+        status=request.status,
+    )
+
+
+def is_overflow_disruption(disruption: str) -> bool:
+    text = disruption.lower()
+    overflow_terms = [
+        "surge",
+        "overflow",
+        "overload",
+        "many patients",
+        "mass casualty",
+        "patient influx",
+        "crowded er",
+        "涌入",
+        "爆满",
+        "超负荷",
+        "大量病患",
+    ]
+    return any(term in text for term in overflow_terms)
+
+
+@app.post("/api/orchestrator/overflow")
+def handle_overflow(request: OverflowRequest):
+    """
+    Orchestrator-controlled patient overflow flow.
+
+    This recommends temporary support nurses and keeps the official schedule
+    unchanged until head nurse approval.
+    """
+    print("\n🧭 [API] POST /api/orchestrator/overflow called")
+
+    if not orchestrator_agent:
+        raise HTTPException(status_code=503, detail="SafeFlow Orchestrator not available")
+
+    nurses = request.nurses or load_fallback_nurses()
+    if not nurses:
+        raise HTTPException(status_code=400, detail="No nurse data available for overflow assessment")
+
+    result = orchestrator_agent.assess_overflow(
+        nurses=nurses,
+        current_schedule=request.current_schedule,
+        incoming_patients=request.incoming_patients,
+        department=request.department,
+        current_day=request.current_day,
+        current_shift=request.current_shift,
+    )
+
+    print(
+        "  ✓ Overflow assessed: "
+        f"{result['load_level']} load, "
+        f"{len(result['recommended_reallocations'])} recommendations"
+    )
+    overflow_event_id = persist_overflow_to_supabase(result, nurses)
+    if overflow_event_id:
+        result["overflow_event_id"] = overflow_event_id
+
+    return result
+
+
 @app.post("/api/emergency")
 def handle_emergency(request: EmergencyRequest):
     """
@@ -522,11 +1396,7 @@ def handle_emergency(request: EmergencyRequest):
     """
     print("\n🚨 [API] POST /api/emergency called")
     print(f"  → Disruption: {request.disruption}")
-    
-    if not emergency_agent:
-        print("  ✗ EmergencyAgent not available")
-        raise HTTPException(status_code=503, detail="Emergency Agent not available")
-    
+
     # Get current schedule or generate one
     current_schedule = request.current_schedule
     if not current_schedule:
@@ -547,10 +1417,46 @@ def handle_emergency(request: EmergencyRequest):
                 raise HTTPException(status_code=500, detail=f"Failed to generate schedule: {str(e)}")
         else:
             raise HTTPException(status_code=503, detail="Scheduling/Forecast agents not available")
+
+    nurses = load_fallback_nurses()
+
+    if is_overflow_disruption(request.disruption):
+        if not orchestrator_agent:
+            raise HTTPException(status_code=503, detail="SafeFlow Orchestrator not available")
+
+        print("  → Patient overflow detected, routing to SafeFlow Orchestrator...")
+        overflow = orchestrator_agent.assess_overflow(
+            nurses=nurses,
+            current_schedule=current_schedule,
+            department="ER",
+        )
+        action_taken = overflow["orchestrator_decision"]
+        recommendations = overflow.get("recommended_reallocations", [])
+        overflow_event_id = persist_overflow_to_supabase(overflow, nurses)
+
+        return {
+            "alerts": [
+                action_taken,
+                overflow["safety_note"],
+            ],
+            "reassignments": [
+                f"Recommend {item['nurse']} ({item['skill']}) from {item['current_ward']} to ER - pending head nurse approval"
+                for item in recommendations
+            ],
+            "updated_schedule": current_schedule,
+            "severity": "HIGH" if overflow["load_level"] in ["HIGH", "CRITICAL"] else "MEDIUM",
+            "action_taken": action_taken,
+            "schedule": current_schedule,
+            "overflow": overflow,
+            "overflow_event_id": overflow_event_id,
+        }
+
+    if not emergency_agent:
+        print("  ✗ EmergencyAgent not available")
+        raise HTTPException(status_code=503, detail="Emergency Agent not available")
     
     # Convert schedule to list format
     schedule_list = []
-    nurses = load_fallback_nurses()
     for day, shifts in current_schedule.items():
         for shift, nurse_names in shifts.items():
             for nurse_name in nurse_names:
@@ -912,12 +1818,14 @@ def root():
     return {
         "name": "NurseAI Multi-Agent Scheduling API",
         "version": "2.0.0",
-        "agents": ["OCR", "Scheduling", "Forecast", "Compliance", "Emergency", "BrightData", "Memory"],
+        "agents": ["Orchestrator", "OCR", "Scheduling", "Forecast", "Compliance", "Emergency", "BrightData", "Memory"],
         "endpoints": [
             "/api/health",
             "/api/nurses",
             "/api/ocr",
             "/api/generate-schedule",
+            "/api/orchestrator/overflow",
+            "/api/emergency-leave",
             "/api/emergency",
             "/api/context",
             "/api/explain",

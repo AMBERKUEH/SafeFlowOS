@@ -22,6 +22,7 @@ load_dotenv()
 
 DAYS   = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 SHIFTS = ["morning", "afternoon", "night"]
+MAX_NIGHT_SHIFTS = 3
 
 
 # ─────────────────────────────────────────────────────────────
@@ -74,6 +75,31 @@ def shift_today(schedule: Dict, day: str, name: str) -> Optional[str]:
     return None
 
 
+def night_shift_count(schedule: Dict, name: str) -> int:
+    return sum(1 for d in DAYS if name in schedule[d].get("night", []))
+
+
+def can_assign_shift(schedule: Dict, day: str, shift: str, name: str) -> bool:
+    if shift_today(schedule, day, name):
+        return False
+
+    if shift == "night" and night_shift_count(schedule, name) >= MAX_NIGHT_SHIFTS:
+        return False
+
+    day_idx = DAYS.index(day)
+    if shift == "morning" and day_idx > 0:
+        previous_day = DAYS[day_idx - 1]
+        if name in schedule[previous_day].get("night", []):
+            return False
+
+    if shift == "night" and day_idx < len(DAYS) - 1:
+        next_day = DAYS[day_idx + 1]
+        if name in schedule[next_day].get("morning", []):
+            return False
+
+    return True
+
+
 # ─────────────────────────────────────────────────────────────
 # PYTHON FALLBACK SCHEDULER
 # Deterministic greedy — always produces a valid schedule
@@ -118,7 +144,10 @@ def python_scheduler(nurses: List[Dict]) -> Dict:
 
         for day in work_days_:
             # Pick the shift with fewest nurses today (balance across shifts)
-            counts = {s: len(schedule[day][s]) for s in SHIFTS}
+            valid_shifts = [s for s in SHIFTS if can_assign_shift(schedule, day, s, name)]
+            if not valid_shifts:
+                continue
+            counts = {s: len(schedule[day][s]) for s in valid_shifts}
             chosen = min(counts, key=counts.get)  # type: ignore
             schedule[day][chosen].append(name)
 
@@ -138,6 +167,8 @@ def python_scheduler(nurses: List[Dict]) -> Dict:
                     if shift_today(schedule, day, name):
                         continue  # already working today
                     if day in nurse_unavail[name]:
+                        continue
+                    if not can_assign_shift(schedule, day, shift, name):
                         continue
                     wc = weekly_shifts(schedule, name)
                     if wc < 6 and wc < best_count:
@@ -234,7 +265,10 @@ def fix_blanks(schedule: Dict, nurses: List[Dict]) -> Dict:
             wc = weekly_shifts(schedule, name)
             if wc < 5:
                 # Should be working — assign the least-staffed shift today
-                counts = {s: len(schedule[day][s]) for s in SHIFTS}
+                valid_shifts = [s for s in SHIFTS if can_assign_shift(schedule, day, s, name)]
+                if not valid_shifts:
+                    continue
+                counts = {s: len(schedule[day][s]) for s in valid_shifts}
                 chosen = min(counts, key=counts.get)  # type: ignore
                 schedule[day][chosen].append(name)
                 print(f"  [BLANK_FIX] {name} was blank on {day} → assigned {chosen}")
@@ -260,6 +294,8 @@ def fix_coverage(schedule: Dict, nurses: List[Dict]) -> Dict:
                         continue
                     if day in nurse_unavail[name]:
                         continue
+                    if not can_assign_shift(schedule, day, shift, name):
+                        continue
                     wc = weekly_shifts(schedule, name)
                     if wc < 6 and wc < best_count:
                         best_count = wc
@@ -271,6 +307,19 @@ def fix_coverage(schedule: Dict, nurses: List[Dict]) -> Dict:
                     print(f"  [WARNING] {day} {shift} still understaffed — insufficient nurses")
                     break
 
+    return schedule
+
+
+def fix_night_to_morning(schedule: Dict) -> Dict:
+    """Remove next-day morning assignments after a nurse worked the prior night."""
+    for day_idx in range(1, len(DAYS)):
+        previous_day = DAYS[day_idx - 1]
+        day = DAYS[day_idx]
+        previous_night = set(schedule[previous_day].get("night", []))
+        for name in list(schedule[day].get("morning", [])):
+            if name in previous_night:
+                schedule[day]["morning"].remove(name)
+                print(f"  [REST_RULE] Removed {name} from {day} morning after {previous_day} night")
     return schedule
 
 
@@ -299,6 +348,11 @@ def validate(schedule: Dict, nurses: List[Dict]) -> None:
             shifts_today = [s for s in SHIFTS if name in schedule[day].get(s, [])]
             if len(shifts_today) > 1:
                 print(f"  ❌ {name} double-booked on {day}: {shifts_today}")
+                all_ok = False
+
+        for day_idx in range(len(DAYS) - 1):
+            if name in schedule[DAYS[day_idx]].get("night", []) and name in schedule[DAYS[day_idx + 1]].get("morning", []):
+                print(f"  [REST_RULE_FAIL] {name} works {DAYS[day_idx]} night then {DAYS[day_idx + 1]} morning")
                 all_ok = False
 
         # Check blanks (not working, not a rest day)
@@ -350,6 +404,7 @@ HARD RULES:
 3. Every shift every day (Mon–Sun) needs >= 3 nurses
 4. Never assign a nurse on their unavailable_days
 5. Max 3 night shifts per nurse per week
+6. If a nurse works a night shift, they CANNOT work the next day morning shift
 
 CAPACITY: {nurse_count} nurses × 5 = {slots_available} available vs {slots_needed} needed.
 {"Some nurses may need 6 shifts." if slots_available < slots_needed else "Capacity sufficient."}
@@ -394,10 +449,16 @@ Return ONLY JSON:
         print("[POST] Step 2: Enforce 2 rest days per nurse...")
         schedule = fix_rest_days(schedule, nurses)
 
-        print("[POST] Step 3: Fix blank days (not working, not rest)...")
+        print("[POST] Step 3: Enforce night-to-next-morning rest...")
+        schedule = fix_night_to_morning(schedule)
+
+        print("[POST] Step 4: Fix blank days (not working, not rest)...")
         schedule = fix_blanks(schedule, nurses)
 
-        print("[POST] Step 4: Backfill understaffed shifts...")
+        print("[POST] Step 5: Re-check night-to-next-morning rest...")
+        schedule = fix_night_to_morning(schedule)
+
+        print("[POST] Step 6: Backfill understaffed shifts...")
         schedule = fix_coverage(schedule, nurses)
 
         return schedule
