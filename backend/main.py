@@ -1757,6 +1757,7 @@ def summarize_consultation(request: SummarizeRequest):
     Summarize a clinical consultation transcript into a SOAP note using Groq AI.
     """
     print("\n📝 [API] POST /api/summarize-consultation called")
+    print(f"  → Transcript received from frontend: '{request.transcript}'")
     
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
@@ -1773,12 +1774,28 @@ def summarize_consultation(request: SummarizeRequest):
         client = Groq(api_key=api_key)
         
         prompt = f"""Analyze the following clinical consultation transcript between a doctor and a patient. 
+
+NOTE ON SPEECH-TO-TEXT ERRORS: The transcript was captured using a basic browser speech recognition tool and may contain phonetic errors or misheard medical terms. Intelligently correct these terms back to their intended medical context before generating the SOAP summary. For example:
+- "beauty row inhaler" or "beauty row" -> "Albuterol inhaler"
+- "arbiter in Heroes" or "arbiter in halo" -> "Albuterol inhaler"
+- "accessorization" or "exaggeration" -> "exacerbation"
+- "Chase" or "cheers" -> "chest"
+- Other phonetically similar phrases should be translated into logical, sound clinical/medical terms.
+
 Organize the details into a highly professional, structured medical SOAP note. 
+
+CRITICAL DOCUMENTATION RULES:
+1. Return each SOAP value as a simple, plain-text string (NOT a JSON array/list of strings).
+2. For "assessment" and "plan", provide a single string with numbered items separated by line breaks (e.g., "1. First point\n2. Second point"), NOT a JSON array list like `["1. First point", "2. Second point"]`.
+3. STRICT DETAIL RETENTION: You MUST preserve and explicitly mention every specific clinical fact, number, duration, measurement, symptom, drug, and follow-up detail stated in the transcript (e.g. if the patient says "dry cough for 3 days", "blood pressure is 145", or "two weeks", these MUST appear in the summary). Do NOT generalize or throw away specific numbers or symptoms.
+4. NO META-EXPLANATIONS OR COMPLAINTS: Never write boilerplate disclaimers about what is missing or what was not discussed (do not write phrases like "lacks detailed information", "was not explicitly stated", "were not thoroughly discussed", or "not mentioned"). Simply document the facts directly. 
+5. If vitals or physical observations are completely absent, do not write a paragraph explaining that they are missing; simply write "Vitals: Not measured." or "Physical Exam: None recorded."
+
 Return ONLY a valid JSON object with the following exact keys:
-- subjective: A detailed paragraph describing patient-reported complaints, symptoms history, onset, severity, and related subjective patient remarks.
-- objective: A paragraph describing clinical observations, vitals, lung/heart examinations, physical indicators, and quantitative clinical results mentioned.
-- assessment: A numbered list of primary clinical diagnoses, impressions, suspected syndromes, and medical reasoning.
-- plan: A detailed numbered list of therapeutic interventions, prescriptions, dosage instructions, patient warning signs education, lab panel requests, and follow-up clinical timelines.
+- subjective: A factual plain-text summary describing patient-reported symptoms, history, onset, duration, and subjective concerns exactly as mentioned.
+- objective: A factual plain-text summary describing clinical observations, vitals, measurements, physical findings, and exams exactly as mentioned.
+- assessment: A plain-text string (NOT an array) containing a numbered list of primary clinical diagnoses or impressions.
+- plan: A plain-text string (NOT an array) containing a numbered list of therapeutic actions, prescriptions, instructions, and follow-up timelines.
 
 Do NOT surround the JSON output in markdown formatting (like ```json). Start your output directly with {{ and end with }}.
 

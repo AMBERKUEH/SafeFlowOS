@@ -33,7 +33,10 @@ export default function PatientsPage() {
 
   // Dictation States
   const [transcript, setTranscript] = useState('');
+  const [fullTranscript, setFullTranscript] = useState('');
   const [recognition, setRecognition] = useState<any>(null);
+  const silenceTimeoutRef = useRef<any>(null);
+  const cutoffTranscriptRef = useRef<string>('');
 
   // SOAP States
   const [soapNotes, setSoapNotes] = useState({
@@ -48,36 +51,6 @@ export default function PatientsPage() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const visualizerAnimationRef = useRef<number | null>(null);
-  const simulateVoiceInputRef = useRef<() => void>(() => { });
-
-  // Simulated Voice input — passes fullText directly to avoid stale React state closure
-  const simulateVoiceInput = () => {
-    const script = [
-      "Patient reports severe chest tightness and dry cough over the past week.",
-      " Blood pressure taken at home is around 140 over 90.",
-      " Attending notes respiratory rate is slightly elevated at 18 breaths per minute, lungs show mild wheezing on examination.",
-      " Recommend starting Albuterol inhaler as needed and follow up in clinic in two weeks."
-    ];
-    let index = 0;
-    let fullText = "";
-
-    const interval = setInterval(() => {
-      if (index < script.length) {
-        fullText += script[index];
-        setTranscript(fullText);
-        index++;
-      } else {
-        clearInterval(interval);
-        // Pass fullText directly — React state may not have flushed yet
-        handleStopAndSummarize(fullText);
-      }
-    }, 2000);
-  };
-
-  // Sync ref
-  useEffect(() => {
-    simulateVoiceInputRef.current = simulateVoiceInput;
-  });
 
   // Initialize browser Speech Recognition
   useEffect(() => {
@@ -89,21 +62,38 @@ export default function PatientsPage() {
       rec.lang = 'en-US';
 
       rec.onresult = (event: any) => {
-        let currentTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          currentTranscript += event.results[i][0].transcript;
+        let fullText = '';
+        for (let i = 0; i < event.results.length; ++i) {
+          fullText += event.results[i][0].transcript + ' ';
         }
-        if (currentTranscript.trim()) {
-          setTranscript(currentTranscript);
+
+        const cleanedFull = fullText.trim();
+        if (cleanedFull) {
+          setFullTranscript(cleanedFull);
+
+          // Slice off the prefix that has already been faded/cleared
+          const cutoffText = cutoffTranscriptRef.current;
+          const previewText = cleanedFull.substring(Math.min(cutoffText.length, cleanedFull.length)).trim();
+
+          setTranscript(previewText);
+
+          if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+          silenceTimeoutRef.current = setTimeout(() => {
+            // Silence! Clear the preview and set cutoff to the current full text
+            cutoffTranscriptRef.current = cleanedFull + ' ';
+            setTranscript('');
+          }, 1000); // Clears preview after 1 second of silence
         }
       };
 
       rec.onerror = (event: any) => {
         console.error('Speech recognition error:', event.error);
         if (event.error === 'not-allowed') {
-          console.warn('Microphone permission blocked/denied. Gracefully falling back to clinical consultation simulator.');
-          simulateVoiceInputRef.current();
+          alert('Microphone permission is blocked. Please allow microphone access in your browser settings to use voice dictation.');
+        } else {
+          alert(`Speech recognition error: ${event.error}. Please try again.`);
         }
+        setStep('idle');
       };
 
       setRecognition(rec);
@@ -154,18 +144,22 @@ export default function PatientsPage() {
   // Start dictation
   const handleStartListening = () => {
     setTranscript('');
+    setFullTranscript('');
+    cutoffTranscriptRef.current = '';
     setDoctorStatus(null);
-    setStep('recording');
+    if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
     if (recognition) {
+      setStep('recording');
       try {
         recognition.start();
       } catch (e) {
-        console.error('Speech Recognition start failed, falling back:', e);
-        simulateVoiceInput();
+        console.error('Speech Recognition start failed:', e);
+        alert('Could not start speech recognition. Please check your microphone.');
+        setStep('idle');
       }
     } else {
-      // Simulator fallback if no microphone standard supported
-      simulateVoiceInput();
+      alert('Speech recognition is not supported in this browser. Please use a modern browser like Chrome or Edge.');
+      setStep('idle');
     }
   };
 
@@ -178,10 +172,11 @@ export default function PatientsPage() {
         console.error('Error stopping recognition:', e);
       }
     }
+    if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
     setStep('summarizing');
 
     // Guard: only use finalText if it is actually a string (not a React event object)
-    const resolvedText = typeof finalText === 'string' ? finalText : transcript;
+    const resolvedText = typeof finalText === 'string' ? finalText : fullTranscript;
     const text = resolvedText.trim();
 
     if (!text) {
@@ -222,49 +217,13 @@ export default function PatientsPage() {
 
   // Local SOAP compiler
   const runSoapSummarizer = (text: string) => {
-    const lower = text.toLowerCase();
-
-    // Subjective details
-    let s = "Patient presents with symptoms captured via voice dictation: ";
-    if (lower.includes("cough")) s += "Reports a persistent dry cough. ";
-    if (lower.includes("tightness") || lower.includes("chest")) s += "Complains of chest tightness and shortness of breath. ";
-    if (s.length === 55) s += text;
-
-    // Objective details
-    let o = "Vitals and physical observations: \n";
-    if (lower.includes("140") || lower.includes("90") || lower.includes("blood pressure")) {
-      o += "- Blood Pressure: 140/90 mmHg (elevated)\n";
-    } else {
-      o += "- Blood Pressure: 120/80 mmHg (stable)\n";
-    }
-    if (lower.includes("wheezing") || lower.includes("lungs")) {
-      o += "- Lungs: Mild expiratory wheezing noted in bilateral lung fields.\n";
-    } else {
-      o += "- Lungs: Clear to auscultation bilaterally.\n";
-    }
-    o += "- Gen: Conscious, in mild respiratory distress.";
-
-    // Assessment details
-    let a = "Clinical Impression:\n";
-    if (lower.includes("cough") && (lower.includes("wheezing") || lower.includes("asthma") || lower.includes("inhaler"))) {
-      a += "1. Bronchial Asthma Exacerbation - Uncontrolled\n2. Dry Cough - secondary to respiratory inflammation";
-    } else if (lower.includes("cough")) {
-      a += "1. Dry Hacking Cough - etiology under evaluation\n2. Mild Hypertension";
-    } else {
-      a += "1. Routine Consultation Review\n2. Vital signs within normal parameters";
-    }
-
-    // Plan details
-    let p = "Therapeutic Regimen:\n";
-    if (lower.includes("albuterol") || lower.includes("inhaler")) {
-      p += "- Prescribed Albuterol Inhaler (100mcg) 2 puffs PO every 4-6 hours PRN.\n";
-    } else {
-      p += "- Continue current home medications as directed.\n";
-    }
-    p += "- Instructed patient on alarm symptoms (worsening dyspnea, fever).\n";
-    p += "- Return to clinic in 14 days for follow-up evaluation.";
-
-    return { subjective: s, objective: o, assessment: a, plan: p };
+    // 100% Dynamic - only documents the actual spoken dictation, NO faked or hardcoded details
+    return {
+      subjective: text,
+      objective: "Physical exam and vitals not recorded.",
+      assessment: "1. Clinical review of dictated encounter.",
+      plan: "1. Follow up as clinically indicated."
+    };
   };
 
   // Sign off & Export PDF
@@ -544,7 +503,7 @@ export default function PatientsPage() {
               <div className="space-y-6">
 
                 <div className="flex items-center justify-between pb-3 border-b border-outline-variant mb-4">
-                  <h3 className="text-[16px] font-semibold text-on-surface">AI-Generated SOAP Summary</h3>
+                  <h3 className="text-[16px] font-semibold text-on-surface">SOAP Summary</h3>
                   <span className="text-[10px] font-bold text-secondary bg-secondary/10 px-2.5 py-0.5 rounded-full border border-secondary/15">
                     Review Required
                   </span>
